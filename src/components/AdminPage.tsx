@@ -14,8 +14,6 @@ interface AdminPageProps {
   onDeliveryReminder: (id: string) => Promise<void>;
   onDeliveryConfirmation: (id: string) => Promise<void>;
   onExport: (requests: DeliveryRequest[], mode: "filtered" | "all") => void;
-  onSeedDemo: () => void;
-  seedingDemo: boolean;
 }
 
 export default function AdminPage({
@@ -28,8 +26,6 @@ export default function AdminPage({
   onDeliveryReminder,
   onDeliveryConfirmation,
   onExport,
-  onSeedDemo,
-  seedingDemo,
 }: AdminPageProps) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -55,7 +51,6 @@ export default function AdminPage({
     () => requests.filter((request) => !request.deleted),
     [requests],
   );
-  const hasDemoRequests = requests.some((request) => request.supplierName.startsWith("[DEMO]"));
 
   const filteredRequests = useMemo(() => {
     const term = search.trim().toLocaleLowerCase();

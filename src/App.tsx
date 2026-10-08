@@ -63,7 +63,6 @@ function App() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
-  const [seedingDemo, setSeedingDemo] = useState(false);
   const [highlightTarget, setHighlightTarget] = useState<MentionTarget | null>(null);
   const [deliveryDateRefresh, setDeliveryDateRefresh] = useState(() => new Date());
 
@@ -414,100 +413,6 @@ function App() {
       setError(cause instanceof Error ? cause.message : "Không gửi được phiếu.");
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function handleSeedDemo() {
-    if (!db || !user || !admin || seedingDemo) return;
-    if (requests.some((request) => request.supplierName.startsWith("[DEMO]"))) {
-      setError("Đã có phiếu demo trong cơ sở dữ liệu; không tạo trùng.");
-      return;
-    }
-    if (!window.confirm("Tạo 5 phiếu demo trong Realtime Database? Các phiếu được đánh dấu [DEMO], không gửi thông báo và không gửi email.")) return;
-
-    const dateOffset = (days: number) => {
-      const date = new Date();
-      date.setDate(date.getDate() + days);
-      return [
-        date.getFullYear(),
-        String(date.getMonth() + 1).padStart(2, "0"),
-        String(date.getDate()).padStart(2, "0"),
-      ].join("-");
-    };
-    const sampleItems = (productIndex: number, expectedDate: string): DeliveryItem[] => [
-      {
-        serialNumber: "1",
-        responsibleStaff: "Nhân sự phụ trách",
-        deliveryLocation: "Kho MRO",
-        poNumber: `PO-DEMO-${productIndex + 1}`,
-        materialName: ["Nước suối 500ml", "Khăn giấy hộp", "Ly giấy 12oz"][productIndex % 3],
-        deliveryQuantity: String(10 + productIndex * 5),
-        expectedDeliveryDate: expectedDate,
-        notes: "Dữ liệu dùng thử",
-      },
-      {
-        serialNumber: "2",
-        responsibleStaff: "Nhân sự phụ trách",
-        deliveryLocation: "Kho MRO",
-        poNumber: `PO-DEMO-${productIndex + 1}`,
-        materialName: ["Trà xanh đóng chai", "Túi rác cuộn", "Hộp đựng thực phẩm"][productIndex % 3],
-        deliveryQuantity: String(5 + productIndex * 3),
-        expectedDeliveryDate: expectedDate,
-        notes: "Dữ liệu dùng thử",
-      },
-    ];
-    const samples: Array<{
-      supplierName: string;
-      deliveryDate: string;
-      status: RequestStatus;
-    }> = [
-      { supplierName: "[DEMO] Công ty Minh Phát", deliveryDate: dateOffset(0), status: "pending" },
-      { supplierName: "[DEMO] Thực phẩm An Nhiên", deliveryDate: dateOffset(1), status: "approved" },
-      { supplierName: "[DEMO] Bao bì Đông Á", deliveryDate: dateOffset(1), status: "reminded" },
-      { supplierName: "[DEMO] Đồ uống Đại Việt", deliveryDate: dateOffset(2), status: "delivered" },
-      { supplierName: "[DEMO] Văn phòng phẩm Sao Mai", deliveryDate: dateOffset(3), status: "rejected" },
-    ];
-
-    setSeedingDemo(true);
-    setError("");
-    setNotice("");
-    let createdCount = 0;
-    try {
-      for (const [index, sample] of samples.entries()) {
-        const requestRef = push(ref(db, "requests"));
-        if (!requestRef.key) throw new Error("Không tạo được mã phiếu demo.");
-        await set(requestRef, {
-          ownerUid: user.uid,
-          ownerEmail: user.email ?? "",
-          ownerName: profile.displayName || user.displayName || user.email || "Quản trị viên",
-          supplierName: sample.supplierName,
-          deliveryGroup: DELIVERY_GROUP,
-          deliveryDate: sample.deliveryDate,
-          items: sampleItems(index, sample.deliveryDate),
-          createdAt: serverTimestamp(),
-          templateHeaders: EXCEL_TEMPLATE.columns.map((column) => column.label),
-        });
-        createdCount += 1;
-        if (sample.status !== "pending") {
-          const revisionRef = push(ref(db, `requests/${requestRef.key}/revisions`));
-          await set(revisionRef, {
-            actorUid: user.uid,
-            actorEmail: user.email ?? "",
-            createdAt: serverTimestamp(),
-            status: sample.status,
-          });
-        }
-        await recordActivity(
-          "request_created",
-          `Tạo phiếu demo cho ${sample.supplierName}, trạng thái ${sample.status}.`,
-          requestRef.key,
-        );
-      }
-      setNotice(`Đã tạo ${createdCount} phiếu demo trong Realtime Database.`);
-    } catch (cause) {
-      setError(`Đã tạo ${createdCount}/${samples.length} phiếu demo trước khi xảy ra lỗi: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
-    } finally {
-      setSeedingDemo(false);
     }
   }
 
@@ -906,8 +811,6 @@ function App() {
                   onStatusChange={(id, status) => handleStatusChange(status, id)}
                   onDeliveryReminder={(id) => handleDeliveryReminder(id)}
                   onDeliveryConfirmation={(id) => handleDeliveryConfirmation(id)}
-                  onSeedDemo={() => void handleSeedDemo()}
-                  seedingDemo={seedingDemo}
                   onExport={(exported, mode) => {
                     void recordActivity(
                       "spreadsheet_exported",
