@@ -1,0 +1,180 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "profiles": {
+      "$uid": {
+        ".read": "auth != null && auth.uid == $uid",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid",
+        ".validate": "newData.hasChildren(['displayName', 'organization', 'phone', 'updatedAt'])",
+        "displayName": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 100" },
+        "organization": { ".validate": "newData.isString() && newData.val().length <= 160" },
+        "phone": { ".validate": "newData.isString() && newData.val().length <= 30" },
+        "updatedAt": { ".validate": "newData.isNumber()" },
+        "$other": { ".validate": false }
+      }
+    },
+    "roles": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com'",
+      "$uid": {
+        ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (auth.token.email == 'nvthoi19112002@gmail.com' || root.child('roles').child(auth.uid).child('role').val() == 'developer')",
+        ".validate": "newData.hasChildren(['role', 'email'])",
+        "role": { ".validate": "newData.val().matches(/^(admin|developer|user)$/)" },
+        "email": { ".validate": "newData.isString() && newData.val().length <= 160" },
+        "displayName": { ".validate": "newData.isString() && newData.val().length <= 160" },
+        "$other": { ".validate": false }
+      }
+    },
+    "requests": {
+      ".indexOn": ["ownerUid"],
+      ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (root.child('roles').child(auth.uid).child('role').val() == 'admin' || (query.orderByChild == 'ownerUid' && query.equalTo == auth.uid))",
+      "$requestId": {
+        ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && newData.child('ownerUid').val() == auth.uid",
+        "revisions": {
+          "$revisionId": {
+            ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && (root.child('roles').child(auth.uid).child('role').val() == 'admin' || root.child('requests').child($requestId).child('ownerUid').val() == auth.uid) && newData.child('actorUid').val() == auth.uid && newData.child('actorEmail').val() == auth.token.email",
+            ".validate": "newData.hasChildren(['actorUid', 'actorEmail', 'createdAt']) && newData.child('createdAt').isNumber() && (!newData.hasChild('status') || root.child('roles').child(auth.uid).child('role').val() == 'admin' || (root.child('requests').child($requestId).child('ownerUid').val() == auth.uid && newData.child('status').val() == 'delivered')) && (!newData.hasChild('deleted') || root.child('roles').child(auth.uid).child('role').val() == 'admin') && (!newData.hasChild('changes') || newData.child('changes').hasChildren())",
+            "actorUid": { ".validate": "newData.val() == auth.uid" },
+            "actorEmail": { ".validate": "newData.val() == auth.token.email" },
+            "createdAt": { ".validate": "newData.isNumber()" },
+            "status": { ".validate": "(root.child('roles').child(auth.uid).child('role').val() == 'admin' && newData.val().matches(/^(pending|approved|rejected|reminded|overdue|delivered)$/)) || (root.child('requests').child($requestId).child('ownerUid').val() == auth.uid && newData.val() == 'delivered')" },
+            "deleted": { ".validate": "root.child('roles').child(auth.uid).child('role').val() == 'admin' && newData.isBoolean()" },
+            "changes": {
+              "supplierName": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 160" },
+              "deliveryGroup": { ".validate": "newData.isString() && newData.val().length <= 160" },
+              "deliveryDate": { ".validate": "newData.isString()" },
+              "deliveryTime": { ".validate": "newData.isString()" },
+              "recipientEmail": { ".validate": "newData.isString() && newData.val().length <= 160" },
+              "notes": { ".validate": "newData.isString() && newData.val().length <= 2000" },
+              "itemChanges": { ".validate": "newData.hasChildren()" },
+              "items": { ".validate": "root.child('roles').child(auth.uid).child('role').val() == 'admin' || root.child('requests').child($requestId).child('ownerUid').val() == auth.uid ? newData.hasChildren() : false" },
+              "attachments": {
+                ".validate": "newData.hasChildren()",
+                "deliveryPlan": {
+                  ".validate": "newData.hasChildren(['id', 'name', 'url', 'mimeType'])",
+                  "id": { ".validate": "newData.isString() && newData.val().length <= 200" },
+                  "name": { ".validate": "newData.isString() && newData.val().length <= 255" },
+                  "url": { ".validate": "newData.isString() && newData.val().beginsWith('https://drive.google.com/')" },
+                  "mimeType": { ".validate": "newData.isString() && newData.val().length <= 160" },
+                  "$other": { ".validate": false }
+                },
+                "companyIntroduction": {
+                  ".validate": "newData.hasChildren(['id', 'name', 'url', 'mimeType'])",
+                  "id": { ".validate": "newData.isString() && newData.val().length <= 200" },
+                  "name": { ".validate": "newData.isString() && newData.val().length <= 255" },
+                  "url": { ".validate": "newData.isString() && newData.val().beginsWith('https://drive.google.com/')" },
+                  "mimeType": { ".validate": "newData.isString() && newData.val().length <= 160" },
+                  "$other": { ".validate": false }
+                },
+                "$other": { ".validate": false }
+              },
+              "$other": { ".validate": false }
+            },
+            "$other": { ".validate": false }
+          }
+        }
+      }
+    },
+    "chats": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && root.child('roles').child(auth.uid).child('role').val() == 'admin'",
+      "$supplierUid": {
+        ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (root.child('roles').child(auth.uid).child('role').val() == 'admin' || auth.uid == $supplierUid)",
+        "threads": {
+          "$adminUid": {
+            ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (auth.uid == $supplierUid || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin'))",
+            "readBy": {
+              "$readerUid": {
+                ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $readerUid && (auth.uid == $supplierUid || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin')) && newData.isNumber() && (!data.exists() || newData.val() >= data.val())",
+                ".validate": "newData.isNumber()"
+              }
+            },
+            "messages": {
+              "$messageId": {
+                ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && newData.child('senderUid').val() == auth.uid && newData.child('senderEmail').val() == auth.token.email && ((auth.uid == $supplierUid && root.child('roles').child($adminUid).child('role').val() == 'admin' && newData.child('recipientEmail').val() == root.child('roles').child($adminUid).child('email').val()) || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin'))",
+                ".validate": "newData.hasChildren(['senderUid', 'senderEmail', 'text', 'createdAt']) && newData.child('senderUid').isString() && newData.child('senderEmail').isString() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 4000 && newData.child('createdAt').isNumber()",
+                "senderUid": { ".validate": "newData.val() == auth.uid" },
+                "senderEmail": { ".validate": "newData.val() == auth.token.email" },
+                "senderName": { ".validate": "newData.isString() && newData.val().length <= 160" },
+                "supplierName": { ".validate": "newData.isString() && newData.val().length <= 160" },
+                "recipientEmail": { ".validate": "newData.isString() && newData.val().length <= 160" },
+                "mention": {
+                  ".validate": "newData.hasChildren(['requestId', 'field', 'label']) && newData.child('requestId').isString() && root.child('requests').child(newData.child('requestId').val()).child('ownerUid').val() == $supplierUid && newData.child('field').val().matches(/^(supplierName|deliveryDate|deliveryTime|recipientEmail|notes|item)$/) && newData.child('label').isString() && newData.child('label').val().length <= 240 && (newData.child('field').val() != 'item' || (newData.child('itemIndex').isNumber() && newData.child('itemIndex').val() >= 0 && newData.child('itemKey').val().matches(/^(sku|name|unit|quantity|note)$/)))",
+                  "requestId": { ".validate": "newData.isString()" },
+                  "field": { ".validate": "newData.val().matches(/^(supplierName|deliveryDate|deliveryTime|recipientEmail|notes|item)$/)" },
+                  "itemIndex": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 499" },
+                  "itemKey": { ".validate": "newData.val().matches(/^(sku|name|unit|quantity|note)$/)" },
+                  "label": { ".validate": "newData.isString() && newData.val().length <= 240" },
+                  "$other": { ".validate": false }
+                },
+                "text": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 4000" },
+                "createdAt": { ".validate": "newData.isNumber()" },
+                "$other": { ".validate": false }
+              }
+            }
+          }
+        }
+      }
+    },
+    "notifications": {
+      "admin": {
+        ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && root.child('roles').child(auth.uid).child('role').val() == 'admin'",
+        "$notificationId": {
+          ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && newData.child('senderUid').val() == auth.uid && newData.child('recipientRole').val() == 'admin' && ((root.child('roles').child(auth.uid).child('role').val() == 'admin' && newData.child('event').val() == 'delivery_confirmed') || (root.child('roles').child(auth.uid).child('role').val() != 'admin' && root.child('requests').child(newData.child('requestId').val()).child('ownerUid').val() == auth.uid))",
+          ".validate": "newData.hasChildren(['requestId', 'senderUid', 'recipientRole', 'text', 'createdAt']) && newData.child('createdAt').isNumber()",
+          "requestId": { ".validate": "newData.isString()" },
+          "senderUid": { ".validate": "newData.val() == auth.uid" },
+          "recipientRole": { ".validate": "newData.val() == 'admin'" },
+          "event": { ".validate": "newData.val().matches(/^(request_submitted|request_status|request_updated|delivery_reminder|delivery_overdue|delivery_confirmed)$/)" },
+          "supplierName": { ".validate": "newData.isString() && newData.val().length <= 160" },
+          "senderName": { ".validate": "newData.isString() && newData.val().length <= 160" },
+          "text": { ".validate": "newData.isString() && newData.val().length <= 500" },
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        }
+      },
+      "notificationReads": {
+        "$uid": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid",
+          "$notificationId": {
+            ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid && newData.isNumber() && (!data.exists() || newData.val() >= data.val())",
+            ".validate": "newData.isNumber()"
+          }
+        }
+      },
+      "users": {
+        "$uid": {
+          ".read": "auth != null && auth.uid == $uid",
+          "$notificationId": {
+            ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && root.child('roles').child(auth.uid).child('role').val() == 'admin' && newData.child('recipientUid').val() == $uid && newData.child('recipientRole').val() == 'supplier' && root.child('requests').child(newData.child('requestId').val()).child('ownerUid').val() == $uid",
+            ".validate": "newData.hasChildren(['requestId', 'senderUid', 'recipientRole', 'recipientUid', 'text', 'createdAt']) && newData.child('createdAt').isNumber()",
+            "requestId": { ".validate": "newData.isString()" },
+            "senderUid": { ".validate": "newData.val() == auth.uid" },
+            "recipientRole": { ".validate": "newData.val() == 'supplier'" },
+            "recipientUid": { ".validate": "newData.val() == $uid" },
+            "event": { ".validate": "newData.val().matches(/^(request_submitted|request_status|request_updated|delivery_reminder|delivery_overdue|delivery_confirmed)$/)" },
+            "supplierName": { ".validate": "newData.isString() && newData.val().length <= 160" },
+            "senderName": { ".validate": "newData.isString() && newData.val().length <= 160" },
+            "text": { ".validate": "newData.isString() && newData.val().length <= 500" },
+            "createdAt": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        }
+      }
+    },
+    "activityLogs": {
+      ".indexOn": ["createdAt"],
+      ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (auth.token.email == 'nvthoi19112002@gmail.com' || root.child('roles').child(auth.uid).child('role').val() == 'developer')",
+      "$logId": {
+        ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && newData.child('actorUid').val() == auth.uid && newData.child('actorEmail').val() == auth.token.email",
+        ".validate": "newData.hasChildren(['actorUid', 'actorEmail', 'action', 'details', 'createdAt']) && newData.child('action').val().matches(/^(request_created|request_updated|request_status_changed|request_deleted|message_sent|spreadsheet_uploaded|spreadsheet_exported|request_viewed|page_opened|profile_updated|signed_in|signed_out)$/) && newData.child('details').isString() && newData.child('details').val().length <= 1000 && newData.child('createdAt').isNumber()",
+        "actorUid": { ".validate": "newData.val() == auth.uid" },
+        "actorEmail": { ".validate": "newData.val() == auth.token.email" },
+        "action": { ".validate": "newData.val().matches(/^(request_created|request_updated|request_status_changed|request_deleted|message_sent|spreadsheet_uploaded|spreadsheet_exported|request_viewed|page_opened|profile_updated|signed_in|signed_out)$/)" },
+        "details": { ".validate": "newData.isString() && newData.val().length <= 1000" },
+        "createdAt": { ".validate": "newData.isNumber()" },
+        "requestId": { ".validate": "newData.isString()" },
+        "$other": { ".validate": false }
+      }
+    }
+  }
+}
