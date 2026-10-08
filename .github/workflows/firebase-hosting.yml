@@ -10,13 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1. Install & Build dự án
-      - run: npm ci && npm run build
+      # 1. Cài đặt dependency & Build dự án
+      - name: Install and Build
+        run: npm ci && npm run build
 
-      # 2. Deploy lên Firebase
-      - uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_TOKEN }}'
-          channelId: live
-          projectId: expressinfo-510914
+      # 2. Deploy lên Firebase bằng Firebase CLI với FIREBASE_TOKEN
+      - name: Deploy to Firebase Hosting
+        run: npx firebase-tools deploy --only hosting --project expressinfo-510914 --token "${{ secrets.FIREBASE_TOKEN }}"
