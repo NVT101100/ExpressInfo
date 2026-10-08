@@ -285,3 +285,37 @@ export async function exportRequests(requests: DeliveryRequest[]) {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+export async function downloadDeliveryTemplate() {
+  const { default: ExcelJS } = await import("exceljs");
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Kế hoạch giao hàng");
+  worksheet.columns = EXCEL_TEMPLATE.columns.map((column) => ({
+    header: column.label,
+    key: column.key,
+    width: Math.max(18, column.label.length + 6),
+  }));
+  worksheet.addRow(Object.fromEntries(EXCEL_TEMPLATE.columns.map((column) => [column.key, ""])));
+  worksheet.views = [{ state: "frozen", ySplit: 1 }];
+  worksheet.autoFilter = {
+    from: { row: 1, column: 1 },
+    to: { row: 1, column: EXCEL_TEMPLATE.columns.length },
+  };
+  worksheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+  worksheet.getRow(1).fill = {
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: "FF16734D" },
+  };
+  const buffer = await workbook.xlsx.writeBuffer();
+  const url = URL.createObjectURL(
+    new Blob([buffer], {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "mau-ke-hoach-giao-hang.xlsx";
+  link.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

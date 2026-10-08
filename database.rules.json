@@ -81,17 +81,17 @@
         ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (root.child('roles').child(auth.uid).child('role').val() == 'admin' || auth.uid == $supplierUid)",
         "threads": {
           "$adminUid": {
-            ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && root.child('roles').child($supplierUid).child('role').val() != 'admin' && (auth.uid == $supplierUid || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin'))",
+            ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && ((root.child('roles').child($supplierUid).child('role').val() != 'admin' && (auth.uid == $supplierUid || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin'))) || (root.child('roles').child($supplierUid).child('role').val() == 'admin' && root.child('roles').child($adminUid).child('role').val() == 'admin' && (auth.uid == $supplierUid || auth.uid == $adminUid)))",
             "readBy": {
               "$readerUid": {
-                ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && root.child('roles').child($supplierUid).child('role').val() != 'admin' && auth.uid == $readerUid && (auth.uid == $supplierUid || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin')) && newData.isNumber() && (!data.exists() || newData.val() >= data.val())",
+                ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $readerUid && ((root.child('roles').child($supplierUid).child('role').val() != 'admin' && (auth.uid == $supplierUid || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin'))) || (root.child('roles').child($supplierUid).child('role').val() == 'admin' && root.child('roles').child($adminUid).child('role').val() == 'admin' && (auth.uid == $supplierUid || auth.uid == $adminUid))) && newData.isNumber() && (!data.exists() || newData.val() >= data.val())",
                 ".validate": "newData.isNumber()"
               }
             },
             "messages": {
               ".indexOn": ["createdAt"],
               "$messageId": {
-                ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && root.child('roles').child($supplierUid).child('role').val() != 'admin' && newData.child('senderUid').val() == auth.uid && newData.child('senderEmail').val() == auth.token.email && ((auth.uid == $supplierUid && root.child('roles').child($adminUid).child('role').val() == 'admin' && newData.child('recipientEmail').val() == root.child('roles').child($adminUid).child('email').val()) || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin'))",
+                ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && ((!data.exists() && newData.child('senderUid').val() == auth.uid && newData.child('senderEmail').val() == auth.token.email && ((root.child('roles').child($supplierUid).child('role').val() != 'admin' && ((auth.uid == $supplierUid && root.child('roles').child($adminUid).child('role').val() == 'admin' && newData.child('recipientEmail').val() == root.child('roles').child($adminUid).child('email').val()) || (auth.uid == $adminUid && root.child('roles').child(auth.uid).child('role').val() == 'admin'))) || (root.child('roles').child($supplierUid).child('role').val() == 'admin' && root.child('roles').child($adminUid).child('role').val() == 'admin' && (auth.uid == $supplierUid || auth.uid == $adminUid)))) || (data.exists() && auth.uid == data.child('senderUid').val() && !newData.exists()))",
                 ".validate": "newData.hasChildren(['senderUid', 'senderEmail', 'text', 'createdAt']) && newData.child('senderUid').isString() && newData.child('senderEmail').isString() && newData.child('text').isString() && newData.child('text').val().length > 0 && newData.child('text').val().length <= 4000 && newData.child('createdAt').isNumber()",
                 "senderUid": { ".validate": "newData.val() == auth.uid" },
                 "senderEmail": { ".validate": "newData.val() == auth.token.email" },
@@ -134,6 +134,15 @@
         }
       },
       "notificationReads": {
+        "$uid": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid",
+          "$notificationId": {
+            ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid && newData.isNumber() && (!data.exists() || newData.val() >= data.val())",
+            ".validate": "newData.isNumber()"
+          }
+        }
+      },
+      "deleted": {
         "$uid": {
           ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid",
           "$notificationId": {

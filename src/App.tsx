@@ -18,6 +18,7 @@ import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "./config";
 import AdminPage from "./components/AdminPage";
 import ChatWidget from "./components/ChatWidget";
 import DeepAdminPage from "./components/DeepAdminPage";
+import Pagination from "./components/Pagination";
 import ProfilePage from "./components/ProfilePage";
 import RequestDetail from "./components/RequestDetail";
 import SupplierRegistrationForm from "./components/SupplierRegistrationForm";
@@ -28,6 +29,7 @@ import {
   daysUntilDelivery,
   deliveryCountdownLabel,
   deliveryTone,
+  downloadDeliveryTemplate,
   formatDate,
   parseSpreadsheet,
   requestFromSnapshot,
@@ -52,6 +54,8 @@ function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState<Page>("supplier");
+  const [notificationPage, setNotificationPage] = useState(0);
+  const [supplierRequestPage, setSupplierRequestPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [supplierName, setSupplierName] = useState("");
   const [deliveryDate, setDeliveryDate] = useState("");
@@ -72,6 +76,7 @@ function App() {
     requests,
     notifications,
     readNotificationIds,
+    deletedNotificationIds,
     notificationsLoaded,
     profile,
     loadingRequests,
@@ -89,9 +94,10 @@ function App() {
   const notificationOwnerUid = useRef<string | null>(null);
   const overdueSyncInProgress = useRef<Set<string>>(new Set());
   const unreadNotificationCount = notifications.reduce(
-    (count, notification) => count + (readNotificationIds.has(notification.id) ? 0 : 1),
+    (count, notification) => count + (deletedNotificationIds.has(notification.id) || readNotificationIds.has(notification.id) ? 0 : 1),
     0,
   );
+  const visibleNotifications = notifications.filter((notification) => !deletedNotificationIds.has(notification.id));
 
   async function markNotificationRead(notificationId: string) {
     if (!db || !user || readNotificationIds.has(notificationId)) return;
@@ -101,6 +107,28 @@ function App() {
       setError(`Không thể đánh dấu thông báo đã đọc: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
     }
   }
+
+  async function deleteNotification(notificationId: string) {
+    if (!db || !user || deletedNotificationIds.has(notificationId)) return;
+    try {
+      await set(ref(db, `notifications/deleted/${user.uid}/${notificationId}`), serverTimestamp());
+    } catch (cause) {
+      setError(`Không thể xóa thông báo: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
+    }
+  }
+
+  useEffect(() => {
+    if (!error && !notice) return;
+    const timeout = window.setTimeout(() => {
+      setError("");
+      setNotice("");
+    }, 60_000);
+    return () => window.clearTimeout(timeout);
+  }, [error, notice]);
+
+  useEffect(() => {
+    setNotificationPage(0);
+  }, [user?.uid]);
 
   useEffect(() => {
     if (!auth) {
@@ -118,7 +146,18 @@ function App() {
   }, [admin, page]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selected) {
+      if (!selectedId) {
+        setSupplierName("");
+        setDeliveryDate("");
+        setItems([]);
+        setPlanFile(null);
+        setIntroductionFile(null);
+        setPlanFileName("");
+        setIntroductionFileName("");
+      }
+      return;
+    }
     setSupplierName(selected.supplierName);
     setDeliveryDate(selected.deliveryDate);
     setItems(selected.items.map((item) => ({ ...item })));
@@ -151,13 +190,13 @@ function App() {
       return;
     }
     if (!notificationsLoaded) return;
-    const nextIds = new Set(notifications.map((notification) => notification.id));
+    const nextIds = new Set(visibleNotifications.map((notification) => notification.id));
     if (seenNotificationIds.current === null) {
       seenNotificationIds.current = nextIds;
       return;
     }
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      for (const notification of notifications) {
+      for (const notification of visibleNotifications) {
         if (!seenNotificationIds.current.has(notification.id)) {
           try {
             const title = notification.event === "request_submitted"
@@ -191,7 +230,7 @@ function App() {
       }
     }
     seenNotificationIds.current = nextIds;
-  }, [admin, notifications, notificationsLoaded]);
+  }, [admin, visibleNotifications, notificationsLoaded]);
 
   useEffect(() => {
     if (!admin || !user) return;
@@ -256,6 +295,14 @@ function App() {
     }),
     [deliveryDateRefresh, requests],
   );
+  const supplierRequestPageCount = Math.ceil(supplierRequests.length / 8);
+  const displayedSupplierRequests = supplierRequests.slice(supplierRequestPage * 8, (supplierRequestPage + 1) * 8);
+
+  useEffect(() => {
+    if (supplierRequestPage >= supplierRequestPageCount) {
+      setSupplierRequestPage(Math.max(0, supplierRequestPageCount - 1));
+    }
+  }, [supplierRequestPage, supplierRequestPageCount]);
 
   async function handleSignIn() {
     if (!auth) return;
@@ -304,6 +351,14 @@ function App() {
       setError(cause instanceof Error ? cause.message : "Không cập nhật được hồ sơ.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleDownloadTemplate() {
+    try {
+      await downloadDeliveryTemplate();
+    } catch (cause) {
+      setError(`Không tải được file Excel mẫu: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
     }
   }
 
@@ -791,12 +846,15 @@ function App() {
               <button className="nav-label sidebar-link" onClick={() => openPage("notifications")}>THÔNG BÁO</button>
               <span className="count">{unreadNotificationCount}</span>
             </div>
-            {notifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : notifications.slice(0, 10).map((notification) => (
-              <button key={notification.id} className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`} onClick={() => { void markNotificationRead(notification.id); setPage(admin ? "admin" : "supplier"); openRequest(notification.requestId); }}>
-                {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}<span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
-              </button>
+            {visibleNotifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : visibleNotifications.slice(0, 10).map((notification) => (
+              <div key={notification.id} className="sidebar-notification">
+                <button className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`} onClick={() => { void markNotificationRead(notification.id); setPage(admin ? "admin" : "supplier"); openRequest(notification.requestId); }}>
+                  {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}<span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
+                </button>
+                <button className="notification-delete" aria-label="Xóa thông báo" title="Xóa thông báo" onClick={() => void deleteNotification(notification.id)}>×</button>
+              </div>
             ))}
-            {notifications.length > 10 && <button className="sidebar-link notification-more" onClick={() => openPage("notifications")}>Xem tất cả thông báo ({notifications.length})</button>}
+            {visibleNotifications.length > 10 && <button className="sidebar-link notification-more" onClick={() => openPage("notifications")}>Xem tất cả thông báo ({visibleNotifications.length})</button>}
           </div>
           <div className="sidebar-foot">Đăng nhập an toàn với Google</div>
         </aside>
@@ -828,21 +886,24 @@ function App() {
                 <span className="count">{unreadNotificationCount} chưa đọc</span>
               </div>
               <div className="panel notification-list">
-                {notifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : notifications.map((notification) => (
-                  <button
-                    key={notification.id}
-                    className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`}
-                    onClick={() => {
-                      void markNotificationRead(notification.id);
-                      setPage(admin ? "admin" : "supplier");
-                      openRequest(notification.requestId);
-                    }}
-                  >
-                    {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}
-                    <span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
-                  </button>
+                {visibleNotifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : visibleNotifications.slice(notificationPage * 20, (notificationPage + 1) * 20).map((notification) => (
+                  <div key={notification.id} className="notification-row">
+                    <button
+                      className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`}
+                      onClick={() => {
+                        void markNotificationRead(notification.id);
+                        setPage(admin ? "admin" : "supplier");
+                        openRequest(notification.requestId);
+                      }}
+                    >
+                      {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}
+                      <span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
+                    </button>
+                    <button className="button danger notification-delete-page" onClick={() => void deleteNotification(notification.id)}>Xóa</button>
+                  </div>
                 ))}
               </div>
+              <Pagination page={notificationPage} pageSize={20} total={visibleNotifications.length} onPageChange={setNotificationPage} />
             </section>
           ) : page === "deepAdmin" && developer ? (
             <DeepAdminPage currentUserUid={user.uid} />
@@ -895,6 +956,7 @@ function App() {
                 planFileName={planFileName}
                 introductionFileName={introductionFileName}
                 onPlanFile={(file) => void handlePlanFile(file)}
+                onDownloadTemplate={() => void handleDownloadTemplate()}
                 onIntroductionFile={handleIntroductionFile}
                 onSave={() => void handleSaveEdit()}
                 onStatus={(status) => void handleStatusChange(status)}
@@ -922,6 +984,7 @@ function App() {
                   planFileName={planFileName}
                   introductionFileName={introductionFileName}
                   onPlanFile={(file) => void handlePlanFile(file)}
+                  onDownloadTemplate={() => void handleDownloadTemplate()}
                   onIntroductionFile={handleIntroductionFile}
                   onSave={() => void handleSaveEdit()}
                   onStatus={(status) => void handleStatusChange(status)}
@@ -937,6 +1000,7 @@ function App() {
                   onSubmit={(event) => void handleSubmit(event)}
                   onSupplierName={setSupplierName}
                   onPlanFile={(file) => void handlePlanFile(file)}
+                  onDownloadTemplate={() => void handleDownloadTemplate()}
                   onIntroductionFile={handleIntroductionFile}
                   onItemChange={updateItem}
                   onRemoveItem={removeItem}
@@ -944,7 +1008,7 @@ function App() {
               </section>
               <aside className="secondary-column">
                 <div className="side-heading"><div><p className="eyebrow">THEO DÕI</p><h2>Phiếu của tôi</h2></div><span className="count">{supplierRequests.length}</span></div>
-                {supplierRequests.length === 0 ? <div className="empty-card"><span className="empty-icon">▤</span><strong>Chưa có phiếu giao hàng</strong><p>Phiếu đã gửi sẽ xuất hiện ở đây để bạn theo dõi và chỉnh sửa.</p></div> : supplierRequests.map((request) => {
+                {supplierRequests.length === 0 ? <div className="empty-card"><span className="empty-icon">▤</span><strong>Chưa có phiếu giao hàng</strong><p>Phiếu đã gửi sẽ xuất hiện ở đây để bạn theo dõi và chỉnh sửa.</p></div> : displayedSupplierRequests.map((request) => {
                   const days = daysUntilDelivery(request.deliveryDate);
                   return <button key={request.id} className={`request-card ${selectedId === request.id ? "selected" : ""}`} onClick={() => openRequest(request.id)}>
                     <div className="request-card-top"><span className={`status status-${request.status}`}>{statusLabels[request.status]}</span><span className="muted tiny">{formatDate(request.createdAt)}</span></div>
@@ -957,6 +1021,12 @@ function App() {
                     {request.revisions.length > 0 && <span className="revision-note">{request.revisions.length} lần cập nhật</span>}
                   </button>;
                 })}
+                <Pagination
+                  page={supplierRequestPage}
+                  pageSize={8}
+                  total={supplierRequests.length}
+                  onPageChange={setSupplierRequestPage}
+                />
               </aside>
             </div>
           ))}

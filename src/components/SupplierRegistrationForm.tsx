@@ -12,6 +12,7 @@ interface SupplierRegistrationFormProps {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onSupplierName: (value: string) => void;
   onPlanFile: (file?: File) => void;
+  onDownloadTemplate: () => void;
   onIntroductionFile: (file?: File) => void;
   onItemChange: (index: number, key: string, value: string) => void;
   onRemoveItem: (index: number) => void;
@@ -26,6 +27,7 @@ export default function SupplierRegistrationForm({
   onSubmit,
   onSupplierName,
   onPlanFile,
+  onDownloadTemplate,
   onIntroductionFile,
   onItemChange,
   onRemoveItem,
@@ -41,8 +43,6 @@ export default function SupplierRegistrationForm({
       </div>
       <form className="panel form-panel supplier-delivery-form" onSubmit={onSubmit}>
         <section className="supplier-guidance">
-          <h2>ĐĂNG KÝ GIAO HÀNG</h2>
-          <h3>Nhóm MRO.2: Vật tư thông dụng &amp; Công cụ dụng cụ</h3>
           <p>Kính gửi Quý Nhà cung cấp,</p>
           <p>Để công tác tiếp nhận hàng hóa được diễn ra thuận lợi và nhanh chóng, Quý NCC vui lòng đọc kỹ hướng dẫn và thực hiện đăng ký thông báo giao hàng theo các quy định dưới đây:</p>
           <h4>1. Thời gian gửi thông báo kế hoạch giao hàng</h4>
@@ -72,15 +72,18 @@ export default function SupplierRegistrationForm({
           <div><h2>Đính kèm hồ sơ</h2><p>File được lưu trong thư mục Google Drive dùng chung của công ty. Danh sách Excel cũng được parse để kiểm tra và lưu thành dữ liệu phiếu.</p></div>
         </div>
         <div className="supplier-attachment-grid">
-          <label className="upload-zone">
-            <input type="file" accept=".xlsx" disabled={saving} onChange={(event) => {
-              onPlanFile(event.target.files?.[0]);
-              event.currentTarget.value = "";
-            }} />
-            <span className="upload-icon">↑</span>
-            <strong>{planFileName || "3. Đính kèm file kế hoạch giao hàng (.xlsx)"}</strong>
-            <span className="muted small">Cột: STT, Nhân sự phụ trách, Địa điểm giao hàng, Số PO, Tên vật tư, Số lượng giao, Ngày giao dự kiến, Ghi chú</span>
-          </label>
+          <div className="supplier-plan-upload">
+            <label className="upload-zone">
+              <input type="file" accept=".xlsx" disabled={saving} onChange={(event) => {
+                onPlanFile(event.target.files?.[0]);
+                event.currentTarget.value = "";
+              }} />
+              <span className="upload-icon">↑</span>
+              <strong>{planFileName || "3. Đính kèm file kế hoạch giao hàng (.xlsx)"}</strong>
+              <span className="muted small">Cột: STT, Nhân sự phụ trách, Địa điểm giao hàng, Số PO, Tên vật tư, Số lượng giao, Đơn vị tính, Ngày giao dự kiến, Ghi chú</span>
+            </label>
+            <button type="button" className="button secondary" onClick={onDownloadTemplate}>↓ Tải file Excel mẫu</button>
+          </div>
           <label className="upload-zone">
             <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" disabled={saving} onChange={(event) => {
               onIntroductionFile(event.target.files?.[0]);

@@ -8,7 +8,11 @@ import type {
   MentionTarget,
   RequestStatus,
 } from "../types";
+import Pagination from "./Pagination";
 import ItemsEditor from "./ItemsEditor";
+
+const LIST_PAGE_SIZE = 10;
+const EMAIL_LIST_PAGE_SIZE = 20;
 
 interface RequestDetailProps {
   request: DeliveryRequest;
@@ -26,6 +30,7 @@ interface RequestDetailProps {
   planFileName: string;
   introductionFileName: string;
   onPlanFile: (file?: File) => void;
+  onDownloadTemplate: () => void;
   onIntroductionFile: (file?: File) => void;
   onSave: () => void;
   onStatus: (status: RequestStatus) => void;
@@ -50,6 +55,7 @@ export default function RequestDetail({
   planFileName,
   introductionFileName,
   onPlanFile,
+  onDownloadTemplate,
   onIntroductionFile,
   onSave,
   onStatus,
@@ -63,14 +69,33 @@ export default function RequestDetail({
   const [selectedEmailRows, setSelectedEmailRows] = useState<Set<number>>(
     () => new Set(items.map((_, index) => index)),
   );
+  const [emailRowsPage, setEmailRowsPage] = useState(0);
+  const [revisionPage, setRevisionPage] = useState(0);
+  const revisions = [...request.revisions].reverse();
+  const visibleRevisions = revisions.slice(revisionPage * LIST_PAGE_SIZE, (revisionPage + 1) * LIST_PAGE_SIZE);
+  const visibleEmailRowItems = items.slice(emailRowsPage * EMAIL_LIST_PAGE_SIZE, (emailRowsPage + 1) * EMAIL_LIST_PAGE_SIZE);
 
   useEffect(() => {
     setReceiverEmail("");
+    setEmailRowsPage(0);
+    setRevisionPage(0);
   }, [request.id]);
 
   useEffect(() => {
     setSelectedEmailRows(new Set(items.map((_, index) => index)));
   }, [request.id, items.length]);
+
+  useEffect(() => {
+    if (emailRowsPage * EMAIL_LIST_PAGE_SIZE >= items.length) {
+      setEmailRowsPage(Math.max(0, Math.ceil(items.length / EMAIL_LIST_PAGE_SIZE) - 1));
+    }
+  }, [items.length, emailRowsPage]);
+
+  useEffect(() => {
+    if (revisionPage >= Math.ceil(request.revisions.length / LIST_PAGE_SIZE)) {
+      setRevisionPage(Math.max(0, Math.ceil(request.revisions.length / LIST_PAGE_SIZE) - 1));
+    }
+  }, [request.revisions.length, revisionPage]);
 
   useEffect(() => {
     if (!highlightTarget || highlightTarget.requestId !== request.id) return;
@@ -187,15 +212,18 @@ export default function RequestDetail({
         </div>
         {!admin && !request.deleted && (
           <>
-          <label className="upload-zone edit-items-upload">
-            <input type="file" accept=".xlsx" disabled={saving} onChange={(event) => {
-              onPlanFile(event.target.files?.[0]);
-              event.currentTarget.value = "";
-            }} />
-            <span className="upload-icon">↑</span>
-            <strong>{planFileName || "Thay file kế hoạch giao hàng (.xlsx)"}</strong>
-            <span className="muted small">File mới sẽ được lưu lên Drive khi lưu phiếu.</span>
-          </label>
+          <div className="supplier-plan-upload edit-items-upload">
+            <label className="upload-zone">
+              <input type="file" accept=".xlsx" disabled={saving} onChange={(event) => {
+                onPlanFile(event.target.files?.[0]);
+                event.currentTarget.value = "";
+              }} />
+              <span className="upload-icon">↑</span>
+              <strong>{planFileName || "Thay file kế hoạch giao hàng (.xlsx)"}</strong>
+              <span className="muted small">File mới sẽ được lưu lên Drive khi lưu phiếu.</span>
+            </label>
+            <button type="button" className="button secondary" onClick={onDownloadTemplate}>↓ Tải file Excel mẫu</button>
+          </div>
           <label className="upload-zone edit-items-upload">
             <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" disabled={saving} onChange={(event) => {
               onIntroductionFile(event.target.files?.[0]);
@@ -246,7 +274,9 @@ export default function RequestDetail({
               </button>
             </div>
             <div className="email-row-list">
-              {items.map((item, index) => (
+              {visibleEmailRowItems.map((item, pageIndex) => {
+                const index = emailRowsPage * EMAIL_LIST_PAGE_SIZE + pageIndex;
+                return (
                 <label className="email-row-option" key={index}>
                   <input
                     type="checkbox"
@@ -265,8 +295,10 @@ export default function RequestDetail({
                     ))}
                   </span>
                 </label>
-              ))}
+                );
+              })}
             </div>
+            <Pagination page={emailRowsPage} pageSize={EMAIL_LIST_PAGE_SIZE} total={items.length} onPageChange={setEmailRowsPage} />
             {validReceiverEmail && emailRows.length > 0 ? (
               <>
                 <a
@@ -318,7 +350,7 @@ export default function RequestDetail({
         <div className="section-title"><span className="step">03</span><div><h2>Lịch sử thay đổi</h2><p>Nhật ký chỉ ghi các trường đã thay đổi.</p></div></div>
         {request.revisions.length === 0 ? <p className="muted small">Chưa có thay đổi nào.</p> : (
           <div className="timeline">
-            {[...request.revisions].reverse().map((revision) => {
+            {visibleRevisions.map((revision) => {
               const editedFields = [
                 ...(revision.changes?.supplierName !== undefined ? ["tên nhà cung cấp"] : []),
                 ...(revision.changes?.deliveryDate !== undefined ? ["ngày giao"] : []),
@@ -339,6 +371,7 @@ export default function RequestDetail({
             })}
           </div>
         )}
+        <Pagination page={revisionPage} pageSize={LIST_PAGE_SIZE} total={revisions.length} onPageChange={setRevisionPage} />
       </div>
     </div>
   );

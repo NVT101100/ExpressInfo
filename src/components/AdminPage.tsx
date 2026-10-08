@@ -353,13 +353,6 @@ export default function AdminPage({
           </div>
         </section>
       )}
-      <div className="stats-row">
-        <StatCard label="Tổng phiếu" value={activeRequests.length} tone="blue" />
-        <StatCard label="Chờ duyệt" value={activeRequests.filter((request) => request.status === "pending").length} tone="amber" />
-        <StatCard label="Đang chờ giao" value={activeRequests.filter((request) => request.status === "approved" || request.status === "reminded" || request.status === "overdue").length} tone="green" />
-        <StatCard label="Đã giao hàng" value={activeRequests.filter((request) => request.status === "delivered").length} tone="blue" />
-        <StatCard label="Nhà cung cấp" value={new Set(activeRequests.map((request) => request.ownerUid)).size} tone="purple" />
-      </div>
       <div className="panel table-panel">
         <div className="toolbar">
           <div><h2>Danh sách phiếu</h2><p className="muted small">Dữ liệu cập nhật theo thời gian thực</p></div>
@@ -487,10 +480,13 @@ export default function AdminPage({
           </div>}
         </div>
       </div>
+      <div className="admin-summary" aria-label="Tóm tắt danh sách phiếu">
+        <span><strong>{activeRequests.length}</strong> phiếu</span>
+        <span><strong>{activeRequests.filter((request) => request.status === "pending").length}</strong> chờ duyệt</span>
+        <span><strong>{activeRequests.filter((request) => ["approved", "reminded", "overdue"].includes(request.status)).length}</strong> chờ giao</span>
+        <span><strong>{activeRequests.filter((request) => request.status === "delivered").length}</strong> đã giao</span>
+        <span><strong>{new Set(activeRequests.map((request) => request.ownerUid)).size}</strong> nhà cung cấp</span>
+      </div>
     </section>
   );
-}
-
-function StatCard({ label, value, tone }: { label: string; value: number; tone: string }) {
-  return <div className={`stat-card tone-${tone}`}><span>{label}</span><strong>{value}</strong><i /></div>;
 }

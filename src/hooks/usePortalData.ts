@@ -49,6 +49,7 @@ export function usePortalData(
   const [requests, setRequests] = useState<DeliveryRequest[]>([]);
   const [notifications, setNotifications] = useState<NotificationDocument[]>([]);
   const [readNotificationIds, setReadNotificationIds] = useState<Set<string>>(() => new Set());
+  const [deletedNotificationIds, setDeletedNotificationIds] = useState<Set<string>>(() => new Set());
   const [notificationsLoaded, setNotificationsLoaded] = useState(false);
   const [profile, setProfile] = useState<UserProfile>({
     displayName: "",
@@ -141,6 +142,7 @@ export function usePortalData(
   useEffect(() => {
     if (!user || !db) {
       setReadNotificationIds(new Set());
+      setDeletedNotificationIds(new Set());
       return;
     }
     return onValue(
@@ -149,6 +151,18 @@ export function usePortalData(
         setReadNotificationIds(new Set(Object.keys(snapshot.val() ?? {})));
       },
       (cause) => reportError(`Không tải được trạng thái đã đọc: ${cause.message}`),
+    );
+  }, [user, reportError]);
+
+  useEffect(() => {
+    if (!user || !db) {
+      setDeletedNotificationIds(new Set());
+      return;
+    }
+    return onValue(
+      ref(db, `notifications/deleted/${user.uid}`),
+      (snapshot) => setDeletedNotificationIds(new Set(Object.keys(snapshot.val() ?? {}))),
+      (cause) => reportError(`Không tải được thông báo đã xóa: ${cause.message}`),
     );
   }, [user, reportError]);
 
@@ -170,6 +184,7 @@ export function usePortalData(
     requests,
     notifications,
     readNotificationIds,
+    deletedNotificationIds,
     notificationsLoaded,
     profile,
     loadingRequests,

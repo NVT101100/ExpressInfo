@@ -1,18 +1,23 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { User } from "firebase/auth";
-import { limitToLast, onValue, orderByChild, push, query, ref, serverTimestamp, set } from "firebase/database";
+import { limitToLast, onValue, orderByChild, push, query, ref, remove, serverTimestamp, set } from "firebase/database";
 import { EXCEL_TEMPLATE } from "../config";
 import { db } from "../firebase";
 import type { AdminRecipient } from "../hooks/usePortalData";
 import { logActivity } from "../lib/activity";
 import { daysUntilDelivery, formatDate, statusLabels } from "../lib/delivery";
+import Pagination from "./Pagination";
 import type { DeliveryRequest, MentionField, MentionTarget, MessageDocument } from "../types";
+
+const CONTACT_PAGE_SIZE = 15;
+const MESSAGE_PAGE_SIZE = 25;
 
 interface ChatContact {
   uid: string;
   email: string;
   name: string;
   supplierName: string;
+  role: "admin" | "user";
   lastMessage?: string;
   lastMessageAt?: number;
 }
@@ -40,6 +45,8 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
   const [selectedAdminUid, setSelectedAdminUid] = useState("");
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [newContactUid, setNewContactUid] = useState("");
+  const [contactPage, setContactPage] = useState(0);
+  const [messagePage, setMessagePage] = useState(0);
   const [messages, setMessages] = useState<MessageDocument[]>([]);
   const [chatContacts, setChatContacts] = useState<ChatContact[]>([]);
   const [unreadByContact, setUnreadByContact] = useState<Record<string, number>>({});
@@ -70,22 +77,21 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
         const previousIds = knownIds;
         const currentIds = new Set<string>();
         const unreadCounts: Record<string, number> = {};
-        for (const [uid, chat] of entries<Record<string, unknown>>(snapshot.val())) {
-          if (uid === user.uid || adminRecipients.some((recipient) => recipient.uid === uid)) continue;
-          const ownThread = entries<Record<string, unknown>>(chat.threads)
-            .find(([key]) => key === user.uid);
-          if (!ownThread) continue;
-          const threadMessages = entries<Omit<MessageDocument, "id">>(ownThread[1].messages)
+        const adminIds = new Set(adminRecipients.map((recipient) => recipient.uid));
+        const addConversation = (
+          contactUid: string,
+          thread: Record<string, unknown>,
+        ) => {
+          const threadMessages = entries<Omit<MessageDocument, "id">>(thread.messages)
             .map(([id, message]) => ({ ...message, id }))
             .sort((a, b) => b.createdAt - a.createdAt);
           const incomingMessages = threadMessages.filter((message) => message.senderUid !== user.uid);
           const readAt = Number(
-            (ownThread[1].readBy as Record<string, number> | undefined)?.[user.uid] ?? 0,
+            (thread.readBy as Record<string, number> | undefined)?.[user.uid] ?? 0,
           );
-          const unreadMessages = incomingMessages.filter((message) => message.createdAt > readAt);
-          unreadCounts[uid] = unreadMessages.length;
+          unreadCounts[contactUid] = incomingMessages.filter((message) => message.createdAt > readAt).length;
           for (const message of incomingMessages) {
-            const messageKey = `${uid}:${message.id}`;
+            const messageKey = `${contactUid}:${message.id}`;
             currentIds.add(messageKey);
             if (previousIds && !previousIds.has(messageKey) && typeof Notification !== "undefined" && Notification.permission === "granted") {
               try {
@@ -95,7 +101,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                 );
                 notification.onclick = () => {
                   window.focus();
-                  setSelectedContactUid(uid);
+                  setSelectedContactUid(contactUid);
                   onOpenMessages();
                 };
               } catch (cause) {
@@ -104,20 +110,34 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
             }
           }
           const lastMessage = threadMessages[0];
-          if (!lastMessage) continue;
+          if (!lastMessage) return;
           const contactMessage = incomingMessages[0] ?? lastMessage;
           loaded.push({
-            uid,
+            uid: contactUid,
             email: contactMessage.senderUid === user.uid
               ? contactMessage.recipientEmail || ""
               : contactMessage.senderEmail,
             name: contactMessage.senderUid === user.uid
               ? contactMessage.supplierName || contactMessage.recipientEmail || ""
               : contactMessage.senderName || contactMessage.senderEmail,
-            supplierName: contactMessage.supplierName || "",
+            supplierName: adminIds.has(contactUid) ? "" : contactMessage.supplierName || "",
+            role: adminIds.has(contactUid) ? "admin" : "user",
             lastMessage: lastMessage.text,
             lastMessageAt: lastMessage.createdAt,
           });
+        };
+        for (const [outerUid, chat] of entries<Record<string, unknown>>(snapshot.val())) {
+          const threads = entries<Record<string, unknown>>(chat.threads);
+          if (outerUid === user.uid) {
+            for (const [threadUid, thread] of threads) {
+              if (adminIds.has(threadUid)) addConversation(threadUid, thread);
+            }
+            continue;
+          }
+          const ownThread = threads.find(([threadUid]) => threadUid === user.uid);
+          if (ownThread) {
+            addConversation(outerUid, ownThread[1]);
+          }
         }
         knownIds = currentIds;
         setUnreadByContact(unreadCounts);
@@ -127,7 +147,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
     );
   }, [admin, adminRecipients, onOpenMessages, user.uid]);
 
-  const contacts = useMemo(() => {
+  const userContacts = useMemo(() => {
     const byUid = new Map<string, ChatContact>();
     const adminUids = new Set(adminRecipients.map((recipient) => recipient.uid));
     for (const request of requests) {
@@ -138,6 +158,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
           email: request.ownerEmail,
           name: request.ownerName || request.ownerEmail,
           supplierName: request.supplierName || "",
+          role: "user",
         });
       }
     }
@@ -148,8 +169,27 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
         ? { ...contact, name: existing.name || contact.name, supplierName: existing.supplierName || contact.supplierName }
         : contact);
     }
-    return [...byUid.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...byUid.values()];
   }, [adminRecipients, chatContacts, requests, user.uid]);
+
+  const contacts = useMemo(() => [
+    ...userContacts,
+    ...adminRecipients
+      .filter((recipient) => recipient.uid !== user.uid)
+      .map((recipient) => ({
+        uid: recipient.uid,
+        email: recipient.email,
+        name: recipient.label,
+        supplierName: "",
+        role: "admin" as const,
+      })),
+  ].sort((a, b) => a.name.localeCompare(b.name)), [adminRecipients, userContacts, user.uid]);
+  const sortedContacts = useMemo(() => [...contacts].sort((a, b) =>
+    (chatContacts.find((contact) => contact.uid === b.uid)?.lastMessageAt ?? 0)
+    - (chatContacts.find((contact) => contact.uid === a.uid)?.lastMessageAt ?? 0)
+    || a.name.localeCompare(b.name),
+  ), [chatContacts, contacts]);
+  const visibleContacts = sortedContacts.slice(contactPage * CONTACT_PAGE_SIZE, (contactPage + 1) * CONTACT_PAGE_SIZE);
 
   useEffect(() => {
     if (admin && !contacts.some((contact) => contact.uid === selectedContactUid)) {
@@ -169,8 +209,34 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
     }
   }, [admin, contacts, newContactUid]);
 
+  useEffect(() => {
+    setContactPage(0);
+  }, [admin]);
+
+  useEffect(() => {
+    if (messagePage >= Math.ceil(messages.length / MESSAGE_PAGE_SIZE)) {
+      setMessagePage(Math.max(0, Math.ceil(messages.length / MESSAGE_PAGE_SIZE) - 1));
+    }
+  }, [messagePage, messages.length]);
+
+  useEffect(() => {
+    if (contactPage >= Math.ceil(sortedContacts.length / CONTACT_PAGE_SIZE)) {
+      setContactPage(Math.max(0, Math.ceil(sortedContacts.length / CONTACT_PAGE_SIZE) - 1));
+    }
+  }, [contactPage, sortedContacts.length]);
+
   const chatUid = admin ? selectedContactUid : user.uid;
   const threadKey = admin ? user.uid : selectedAdminUid;
+  const activeContactIsAdmin = admin && adminRecipients.some((recipient) => recipient.uid === selectedContactUid);
+  const conversationPath = activeContactIsAdmin
+    ? `chats/${[user.uid, selectedContactUid].sort()[0]}/threads/${[user.uid, selectedContactUid].sort()[1]}`
+    : `chats/${chatUid}/threads/${threadKey}`;
+  const visibleMessages = messages.slice(messagePage * MESSAGE_PAGE_SIZE, (messagePage + 1) * MESSAGE_PAGE_SIZE);
+  const visibleAdminRecipients = adminRecipients.slice(contactPage * CONTACT_PAGE_SIZE, (contactPage + 1) * CONTACT_PAGE_SIZE);
+  useEffect(() => {
+    setMessagePage(0);
+  }, [conversationPath]);
+
   const activeContact = contacts.find((contact) => contact.uid === chatUid);
   const mentionRequests = useMemo(
     () => requests.filter((request) =>
@@ -272,9 +338,12 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       setLoadedThreadKey("");
       return;
     }
+    setMessages([]);
+    setLastReadAt(0);
+    setLoadedThreadKey("");
     let knownIds: Set<string> | null = null;
     const messagesQuery = query(
-      ref(db, `chats/${chatUid}/threads/${threadKey}/messages`),
+      ref(db, `${conversationPath}/messages`),
       orderByChild("createdAt"),
       limitToLast(100),
     );
@@ -284,7 +353,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
         const loaded = entries<Omit<MessageDocument, "id">>(snapshot.val())
           .map(([id, message]) => ({ ...message, id }))
           .sort((a, b) => a.createdAt - b.createdAt);
-        setLoadedThreadKey(`${chatUid}:${threadKey}`);
+        setLoadedThreadKey(conversationPath);
         const previousIds = knownIds;
         if (!admin && previousIds && typeof Notification !== "undefined" && Notification.permission === "granted") {
           for (const message of loaded) {
@@ -311,7 +380,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       (cause) => setError(`Không tải được tin nhắn: ${cause.message}`),
     );
     const stopReadState = onValue(
-      ref(db, `chats/${chatUid}/threads/${threadKey}/readBy/${user.uid}`),
+      ref(db, `${conversationPath}/readBy/${user.uid}`),
       (snapshot) => setLastReadAt(Number(snapshot.val() ?? 0)),
       (cause) => setError(`Không tải được trạng thái đã đọc: ${cause.message}`),
     );
@@ -319,7 +388,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       stopMessages();
       stopReadState();
     };
-  }, [admin, chatUid, onOpenMessages, threadKey, user.uid]);
+  }, [admin, chatUid, conversationPath, onOpenMessages, threadKey, user.uid]);
 
   const unreadMessageCount = admin
     ? Object.values(unreadByContact).reduce((sum, count) => sum + count, 0)
@@ -330,7 +399,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
   }, [onUnreadCountChange, unreadMessageCount]);
 
   useEffect(() => {
-    if (!active || !db || !chatUid || loadedThreadKey !== `${chatUid}:${threadKey}`) return;
+    if (!active || !db || !chatUid || loadedThreadKey !== conversationPath) return;
     const newestIncoming = messages.reduce(
       (latest, message) => message.senderUid !== user.uid
         ? Math.max(latest, message.createdAt)
@@ -338,16 +407,16 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       0,
     );
     if (newestIncoming <= lastReadAt) return;
-    void set(ref(db, `chats/${chatUid}/threads/${threadKey}/readBy/${user.uid}`), newestIncoming)
+    void set(ref(db, `${conversationPath}/readBy/${user.uid}`), newestIncoming)
       .catch((cause: unknown) => setError(`Không đánh dấu được tin nhắn đã đọc: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`));
-  }, [active, chatUid, lastReadAt, loadedThreadKey, messages, threadKey, user.uid]);
+  }, [active, chatUid, conversationPath, lastReadAt, loadedThreadKey, messages, user.uid]);
 
   useEffect(() => {
-    if (admin || loadedThreadKey !== `${chatUid}:${threadKey}`) return;
+    if (admin || loadedThreadKey !== conversationPath) return;
     setUnreadByContact({
       [user.uid]: messages.filter((message) => message.senderUid !== user.uid && message.createdAt > lastReadAt).length,
     });
-  }, [admin, chatUid, lastReadAt, loadedThreadKey, messages, threadKey, user.uid]);
+  }, [admin, chatUid, conversationPath, lastReadAt, loadedThreadKey, messages, user.uid]);
 
   async function enableNotifications() {
     if (typeof Notification === "undefined") return;
@@ -364,7 +433,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
     setSending(true);
     setError("");
     try {
-      const messageRef = push(ref(db, `chats/${chatUid}/threads/${threadKey}/messages`));
+      const messageRef = push(ref(db, `${conversationPath}/messages`));
       await set(messageRef, {
         senderUid: user.uid,
         senderEmail: user.email ?? "",
@@ -373,7 +442,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
           supplierName: activeContact?.supplierName || activeContact?.name || "",
           recipientEmail: activeContact?.email || "",
         }),
-        ...(mentionTarget ? { mention: mentionTarget } : {}),
+        ...(mentionTarget && !activeContactIsAdmin ? { mention: mentionTarget } : {}),
         text: text.trim(),
         createdAt: serverTimestamp(),
       });
@@ -389,6 +458,15 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       setError(cause instanceof Error ? cause.message : "Không gửi được tin nhắn.");
     } finally {
       setSending(false);
+    }
+  }
+
+  async function deleteMessage(messageId: string) {
+    if (!db || !window.confirm("Xóa tin nhắn này?")) return;
+    try {
+      await remove(ref(db, `${conversationPath}/messages/${messageId}`));
+    } catch (cause) {
+      setError(`Không xóa được tin nhắn: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
     }
   }
 
@@ -410,7 +488,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       <div className="messages-layout">
         <aside className="panel conversation-list" aria-label="Danh sách cuộc trò chuyện">
           <div className="conversation-list-heading">
-            <strong>{admin ? "Người dùng" : "Quản trị viên"}</strong>
+            <strong>{admin ? "Cuộc trò chuyện" : "Quản trị viên"}</strong>
             <span className="count">{admin ? contacts.length : adminRecipients.length}</span>
           </div>
           {admin && contacts.length > 0 && (
@@ -431,27 +509,18 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
           )}
           <div className="conversation-list-items">
             {admin ? (
-              <>
-                {chatContacts
-                  .slice()
-                  .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
-                  .map((contact) => (
-                    <button key={contact.uid} className={`conversation-contact ${selectedContactUid === contact.uid ? "active" : ""}`} onClick={() => setSelectedContactUid(contact.uid)}>
-                      <strong>{[contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email}</strong>
-                      <span>{contact.lastMessage || contact.email}</span>
-                      {unreadByContact[contact.uid] > 0 && <span className="conversation-unread">{unreadByContact[contact.uid]} tin chưa đọc</span>}
-                    </button>
-                  ))}
-                {contacts.filter((contact) => !chatContacts.some((conversation) => conversation.uid === contact.uid)).map((contact) => (
+              visibleContacts.map((contact) => {
+                const conversation = chatContacts.find((entry) => entry.uid === contact.uid);
+                return (
                   <button key={contact.uid} className={`conversation-contact ${selectedContactUid === contact.uid ? "active" : ""}`} onClick={() => setSelectedContactUid(contact.uid)}>
                     <strong>{[contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email}</strong>
-                    <span>{contact.email} · Chưa có tin nhắn</span>
+                    <span>{conversation?.lastMessage || (conversation ? contact.email : `${contact.email} · Chưa có tin nhắn`)}</span>
+                    {unreadByContact[contact.uid] > 0 && <span className="conversation-unread">{unreadByContact[contact.uid]} tin chưa đọc</span>}
                   </button>
-                ))}
-                {contacts.length === 0 && <p className="muted small conversation-empty">Chưa có người dùng để trò chuyện.</p>}
-              </>
+                );
+              })
             ) : (
-              adminRecipients.map((recipient) => (
+              visibleAdminRecipients.map((recipient) => (
                 <button key={recipient.uid} className={`conversation-contact ${selectedAdminUid === recipient.uid ? "active" : ""}`} onClick={() => setSelectedAdminUid(recipient.uid)}>
                   <strong>{recipient.label}</strong>
                   <span>{recipient.email}</span>
@@ -460,6 +529,12 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
             )}
             {!admin && adminRecipients.length === 0 && <p className="muted small conversation-empty">Chưa có quản trị viên để trò chuyện.</p>}
           </div>
+          <Pagination
+            page={contactPage}
+            pageSize={CONTACT_PAGE_SIZE}
+            total={admin ? sortedContacts.length : adminRecipients.length}
+            onPageChange={setContactPage}
+          />
         </aside>
         <section className="chat-window panel" aria-label="Trò chuyện">
           <header className="chat-window-header">
@@ -473,14 +548,16 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
               <p className="muted small">Chọn một người trong danh sách để xem hoặc bắt đầu trò chuyện.</p>
             ) : messages.length === 0 ? (
               <p className="muted small">Chưa có tin nhắn. Bắt đầu trò chuyện tại đây.</p>
-            ) : messages.map((message) => {
+            ) : visibleMessages.map((message) => {
               const mention = message.mention;
               return (
                 <div key={message.id} className={`message ${message.senderUid === user.uid ? "own-message" : ""}`}>
                   <div className="message-meta">
                     <strong>
                       {admin
-                        ? [message.supplierName, message.senderName].filter(Boolean).join(" · ") || message.senderEmail
+                        ? activeContactIsAdmin
+                          ? message.senderName || message.senderEmail
+                          : [message.supplierName, message.senderName].filter(Boolean).join(" · ") || message.senderEmail
                         : message.senderUid === user.uid
                           ? `Bạn · ${message.supplierName || supplierDisplayName} · ${message.senderName || user.email}`
                           : message.senderName || contactName}
@@ -488,6 +565,9 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                     <span>{formatDate(message.createdAt)}</span>
                   </div>
                   <p>{message.text}</p>
+                  {message.senderUid === user.uid && (
+                    <button className="message-delete" onClick={() => void deleteMessage(message.id)}>Xóa tin nhắn</button>
+                  )}
                   {mention && (
                     <button
                       className="message-mention"
@@ -502,8 +582,9 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
               );
             })}
           </div>
+          <Pagination page={messagePage} pageSize={MESSAGE_PAGE_SIZE} total={messages.length} onPageChange={setMessagePage} />
           {error && <p className="chat-error" role="alert">{error}</p>}
-          {mentionEnabled && (
+          {mentionEnabled && !activeContactIsAdmin && (
             <div className="mention-composer">
               <label className="field">
                 <span className="field-label">1. Chọn ngày giao</span>
@@ -592,7 +673,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
           )}
           <form className="chat-form" onSubmit={(event) => void sendMessage(event)}>
             <div className="chat-compose-input">
-              <button type="button" className={`mention-toggle ${mentionEnabled ? "active" : ""}`} disabled={!chatUid || sending || mentionRequests.length === 0} aria-label="Đề cập nội dung phiếu" title="Đề cập nội dung phiếu" onClick={() => setMentionEnabled((enabled) => !enabled)}>@</button>
+              <button type="button" className={`mention-toggle ${mentionEnabled ? "active" : ""}`} disabled={!chatUid || sending || activeContactIsAdmin || mentionRequests.length === 0} aria-label="Đề cập nội dung phiếu" title={activeContactIsAdmin ? "Không đề cập phiếu trong chat giữa admin." : "Đề cập nội dung phiếu"} onClick={() => setMentionEnabled((enabled) => !enabled)}>@</button>
               <input
                 className="text-input"
                 aria-label="Tin nhắn"

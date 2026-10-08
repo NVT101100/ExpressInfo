@@ -3,6 +3,10 @@ import { limitToLast, onValue, orderByChild, query, ref, set } from "firebase/da
 import { formatDate } from "../lib/delivery";
 import { db } from "../firebase";
 import type { ActivityLog } from "../types";
+import Pagination from "./Pagination";
+
+const USER_PAGE_SIZE = 25;
+const LOG_PAGE_SIZE = 50;
 
 type ManagedRole = "admin" | "developer" | "user";
 interface ManagedUser {
@@ -34,6 +38,8 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [managedUsers, setManagedUsers] = useState<Array<ManagedUser & { uid: string }>>([]);
   const [search, setSearch] = useState("");
+  const [userPage, setUserPage] = useState(0);
+  const [logPage, setLogPage] = useState(0);
   const [error, setError] = useState("");
   const [roleError, setRoleError] = useState("");
   const [savingUid, setSavingUid] = useState("");
@@ -95,6 +101,22 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
       ].join(" ").toLocaleLowerCase().includes(term),
     );
   }, [logs, search]);
+  const displayedUsers = managedUsers.slice(userPage * USER_PAGE_SIZE, (userPage + 1) * USER_PAGE_SIZE);
+  const displayedLogs = filteredLogs.slice(logPage * LOG_PAGE_SIZE, (logPage + 1) * LOG_PAGE_SIZE);
+
+  useEffect(() => {
+    setUserPage(0);
+  }, [managedUsers.length]);
+
+  useEffect(() => {
+    setLogPage(0);
+  }, [search]);
+
+  useEffect(() => {
+    if (logPage >= Math.ceil(filteredLogs.length / LOG_PAGE_SIZE)) {
+      setLogPage(Math.max(0, Math.ceil(filteredLogs.length / LOG_PAGE_SIZE) - 1));
+    }
+  }, [filteredLogs.length, logPage]);
 
   async function saveRole(uid: string, user: ManagedUser): Promise<boolean> {
     if (!db || uid === currentUserUid) return false;
@@ -197,7 +219,7 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
           <table>
             <thead><tr><th>UID</th><th>NGƯỜI DÙNG</th><th>ROLE</th></tr></thead>
             <tbody>
-              {managedUsers.map((managedUser) => (
+              {displayedUsers.map((managedUser) => (
                 <tr key={managedUser.uid}>
                   <td className="role-uid">{managedUser.uid}</td>
                   <td>{managedUser.displayName || managedUser.email}<br /><span className="muted small">{managedUser.email}</span></td>
@@ -224,6 +246,7 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
             </tbody>
           </table>
         </div>
+        <Pagination page={userPage} pageSize={USER_PAGE_SIZE} total={managedUsers.length} onPageChange={setUserPage} />
       </div>
       <div className="panel table-panel">
         <div className="toolbar">
@@ -234,7 +257,7 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
           <table>
             <thead><tr><th>THỜI GIAN</th><th>NGƯỜI DÙNG</th><th>HOẠT ĐỘNG</th><th>MÃ PHIẾU</th><th>CHI TIẾT</th></tr></thead>
             <tbody>
-              {filteredLogs.map((entry) => <tr key={entry.id}>
+              {displayedLogs.map((entry) => <tr key={entry.id}>
                 <td>{formatDate(entry.createdAt)}</td>
                 <td>{entry.actorEmail}</td>
                 <td><span className="activity-action">{actionLabels[entry.action] ?? entry.action}</span></td>
@@ -245,6 +268,7 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
             </tbody>
           </table>
         </div>
+        <Pagination page={logPage} pageSize={LOG_PAGE_SIZE} total={filteredLogs.length} onPageChange={setLogPage} />
       </div>
       <p className="log-retention-note">Log được giữ trong Realtime Database. Khi cần giảm dung lượng, bật tích hợp Drive/Cloud Functions để lưu trữ ngoài DB và cấu hình chính sách lưu giữ.</p>
     </section>
