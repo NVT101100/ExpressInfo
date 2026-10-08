@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   GoogleAuthProvider,
   onAuthStateChanged,
@@ -46,7 +46,7 @@ import type {
   RequestStatus,
 } from "./types";
 
-type Page = "supplier" | "admin" | "deepAdmin" | "profile";
+type Page = "supplier" | "admin" | "deepAdmin" | "profile" | "messages" | "notifications";
 
 function App() {
   const [user, setUser] = useState<User | null>(null);
@@ -65,6 +65,8 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [highlightTarget, setHighlightTarget] = useState<MentionTarget | null>(null);
   const [deliveryDateRefresh, setDeliveryDateRefresh] = useState(() => new Date());
+  const [unreadMessageCount, setUnreadMessageCount] = useState(0);
+  const openMessagesPage = useCallback(() => setPage("messages"), []);
 
   const {
     requests,
@@ -770,6 +772,14 @@ function App() {
           {admin && <button className={`nav-item ${page === "admin" ? "active" : ""}`} onClick={() => openPage("admin")}>
             <span className="nav-icon">▦</span> Quản trị tổng hợp
           </button>}
+          <button className={`nav-item ${page === "messages" ? "active" : ""}`} onClick={() => openPage("messages")}>
+            <span className="nav-icon">✉</span> Tin nhắn
+            {unreadMessageCount > 0 && <span className="count nav-count">{unreadMessageCount > 99 ? "99+" : unreadMessageCount}</span>}
+          </button>
+          <button className={`nav-item ${page === "notifications" ? "active" : ""}`} onClick={() => openPage("notifications")}>
+            <span className="nav-icon">♧</span> Thông báo
+            {unreadNotificationCount > 0 && <span className="count nav-count">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
+          </button>
           {developer && <button className={`nav-item ${page === "deepAdmin" ? "active" : ""}`} onClick={() => openPage("deepAdmin")}>
             <span className="nav-icon">⌘</span> Deep Admin
           </button>}
@@ -777,20 +787,64 @@ function App() {
             <span className="nav-icon">◎</span> Hồ sơ của tôi
           </button>
           <div className="sidebar-bottom">
-            <div className="notification-head"><span className="nav-label">THÔNG BÁO</span><span className="count">{unreadNotificationCount}</span></div>
-            {notifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : notifications.slice(0, 5).map((notification) => (
+            <div className="notification-head">
+              <button className="nav-label sidebar-link" onClick={() => openPage("notifications")}>THÔNG BÁO</button>
+              <span className="count">{unreadNotificationCount}</span>
+            </div>
+            {notifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : notifications.slice(0, 10).map((notification) => (
               <button key={notification.id} className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`} onClick={() => { void markNotificationRead(notification.id); setPage(admin ? "admin" : "supplier"); openRequest(notification.requestId); }}>
                 {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}<span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
               </button>
             ))}
+            {notifications.length > 10 && <button className="sidebar-link notification-more" onClick={() => openPage("notifications")}>Xem tất cả thông báo ({notifications.length})</button>}
           </div>
           <div className="sidebar-foot">Đăng nhập an toàn với Google</div>
         </aside>
-        <main className="main-content">
+        <main className={`main-content ${admin && page === "admin" ? "admin-main-content" : ""}`}>
           {error && <div className="alert error"><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
           {notice && <div className="alert success"><span>{notice}</span><button onClick={() => setNotice("")}>×</button></div>}
 
-          {page === "deepAdmin" && developer ? (
+          <ChatWidget
+            user={user}
+            admin={admin}
+            adminRecipients={adminRecipients}
+            requests={requests}
+            onOpenMention={openMentionedContent}
+            onUnreadCountChange={setUnreadMessageCount}
+            onOpenMessages={openMessagesPage}
+            active={page === "messages"}
+            hidden={page !== "messages"}
+            supplierDisplayName={
+              supplierName.trim()
+              || profile.organization
+              || requests.find((request) => request.ownerUid === user.uid)?.supplierName
+              || "Nhà cung cấp"
+            }
+          />
+          {page !== "messages" && (page === "notifications" ? (
+            <section className="notifications-page">
+              <div className="page-heading">
+                <div><p className="eyebrow">CẬP NHẬT</p><h1>Thông báo</h1><p className="muted">Toàn bộ thông báo mới nhất của bạn.</p></div>
+                <span className="count">{unreadNotificationCount} chưa đọc</span>
+              </div>
+              <div className="panel notification-list">
+                {notifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : notifications.map((notification) => (
+                  <button
+                    key={notification.id}
+                    className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`}
+                    onClick={() => {
+                      void markNotificationRead(notification.id);
+                      setPage(admin ? "admin" : "supplier");
+                      openRequest(notification.requestId);
+                    }}
+                  >
+                    {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}
+                    <span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          ) : page === "deepAdmin" && developer ? (
             <DeepAdminPage currentUserUid={user.uid} />
           ) : page === "profile" ? (
             <ProfilePage
@@ -905,22 +959,9 @@ function App() {
                 })}
               </aside>
             </div>
-          )}
+          ))}
         </main>
       </div>
-      <ChatWidget
-        user={user}
-        admin={admin}
-        adminRecipients={adminRecipients}
-        requests={requests}
-        onOpenMention={openMentionedContent}
-        supplierDisplayName={
-          supplierName.trim()
-          || profile.organization
-          || requests.find((request) => request.ownerUid === user.uid)?.supplierName
-          || "Nhà cung cấp"
-        }
-      />
     </div>
   );
 }

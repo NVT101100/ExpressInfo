@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import type { User } from "firebase/auth";
-import { onValue, push, ref, serverTimestamp, set } from "firebase/database";
+import { limitToLast, onValue, orderByChild, push, query, ref, serverTimestamp, set } from "firebase/database";
 import { EXCEL_TEMPLATE } from "../config";
 import { db } from "../firebase";
 import type { AdminRecipient } from "../hooks/usePortalData";
@@ -13,6 +13,8 @@ interface ChatContact {
   email: string;
   name: string;
   supplierName: string;
+  lastMessage?: string;
+  lastMessageAt?: number;
 }
 
 interface ChatWidgetProps {
@@ -22,6 +24,10 @@ interface ChatWidgetProps {
   requests: DeliveryRequest[];
   supplierDisplayName: string;
   onOpenMention: (target: MentionTarget) => void;
+  onUnreadCountChange: (count: number) => void;
+  onOpenMessages: () => void;
+  active: boolean;
+  hidden: boolean;
 }
 
 function entries<T extends object>(value: unknown): Array<[string, T]> {
@@ -29,10 +35,11 @@ function entries<T extends object>(value: unknown): Array<[string, T]> {
   return Object.entries(value) as Array<[string, T]>;
 }
 
-export default function ChatWidget({ user, admin, adminRecipients, requests, supplierDisplayName, onOpenMention }: ChatWidgetProps) {
-  const [open, setOpen] = useState(false);
+export default function ChatWidget({ user, admin, adminRecipients, requests, supplierDisplayName, onOpenMention, onUnreadCountChange, onOpenMessages, active, hidden }: ChatWidgetProps) {
   const [selectedContactUid, setSelectedContactUid] = useState("");
   const [selectedAdminUid, setSelectedAdminUid] = useState("");
+  const [showNewConversation, setShowNewConversation] = useState(false);
+  const [newContactUid, setNewContactUid] = useState("");
   const [messages, setMessages] = useState<MessageDocument[]>([]);
   const [chatContacts, setChatContacts] = useState<ChatContact[]>([]);
   const [unreadByContact, setUnreadByContact] = useState<Record<string, number>>({});
@@ -64,19 +71,20 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
         const currentIds = new Set<string>();
         const unreadCounts: Record<string, number> = {};
         for (const [uid, chat] of entries<Record<string, unknown>>(snapshot.val())) {
+          if (uid === user.uid || adminRecipients.some((recipient) => recipient.uid === uid)) continue;
           const ownThread = entries<Record<string, unknown>>(chat.threads)
             .find(([key]) => key === user.uid);
           if (!ownThread) continue;
-          const supplierMessages = entries<Omit<MessageDocument, "id">>(ownThread[1].messages)
+          const threadMessages = entries<Omit<MessageDocument, "id">>(ownThread[1].messages)
             .map(([id, message]) => ({ ...message, id }))
-            .filter((message) => message.senderUid !== user.uid)
             .sort((a, b) => b.createdAt - a.createdAt);
+          const incomingMessages = threadMessages.filter((message) => message.senderUid !== user.uid);
           const readAt = Number(
             (ownThread[1].readBy as Record<string, number> | undefined)?.[user.uid] ?? 0,
           );
-          const unreadMessages = supplierMessages.filter((message) => message.createdAt > readAt);
+          const unreadMessages = incomingMessages.filter((message) => message.createdAt > readAt);
           unreadCounts[uid] = unreadMessages.length;
-          for (const message of supplierMessages) {
+          for (const message of incomingMessages) {
             const messageKey = `${uid}:${message.id}`;
             currentIds.add(messageKey);
             if (previousIds && !previousIds.has(messageKey) && typeof Notification !== "undefined" && Notification.permission === "granted") {
@@ -88,20 +96,27 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                 notification.onclick = () => {
                   window.focus();
                   setSelectedContactUid(uid);
-                  setOpen(true);
+                  onOpenMessages();
                 };
               } catch (cause) {
                 setError(cause instanceof Error ? cause.message : "Không hiển thị được thông báo chat.");
               }
             }
           }
-          const supplierMessage = supplierMessages[0];
-          if (!supplierMessage?.senderEmail) continue;
+          const lastMessage = threadMessages[0];
+          if (!lastMessage) continue;
+          const contactMessage = incomingMessages[0] ?? lastMessage;
           loaded.push({
             uid,
-            email: supplierMessage.senderEmail,
-            name: supplierMessage.senderName || supplierMessage.senderEmail,
-            supplierName: supplierMessage.supplierName || "",
+            email: contactMessage.senderUid === user.uid
+              ? contactMessage.recipientEmail || ""
+              : contactMessage.senderEmail,
+            name: contactMessage.senderUid === user.uid
+              ? contactMessage.supplierName || contactMessage.recipientEmail || ""
+              : contactMessage.senderName || contactMessage.senderEmail,
+            supplierName: contactMessage.supplierName || "",
+            lastMessage: lastMessage.text,
+            lastMessageAt: lastMessage.createdAt,
           });
         }
         knownIds = currentIds;
@@ -110,11 +125,13 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       },
       (cause) => setError(`Không tải được danh sách chat: ${cause.message}`),
     );
-  }, [admin, user.uid]);
+  }, [admin, adminRecipients, onOpenMessages, user.uid]);
 
   const contacts = useMemo(() => {
     const byUid = new Map<string, ChatContact>();
+    const adminUids = new Set(adminRecipients.map((recipient) => recipient.uid));
     for (const request of requests) {
+      if (request.ownerUid === user.uid || adminUids.has(request.ownerUid)) continue;
       if (!byUid.has(request.ownerUid)) {
         byUid.set(request.ownerUid, {
           uid: request.ownerUid,
@@ -125,13 +142,14 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       }
     }
     for (const contact of chatContacts) {
+      if (contact.uid === user.uid || adminUids.has(contact.uid)) continue;
       const existing = byUid.get(contact.uid);
       byUid.set(contact.uid, existing
         ? { ...contact, name: existing.name || contact.name, supplierName: existing.supplierName || contact.supplierName }
         : contact);
     }
     return [...byUid.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [chatContacts, requests]);
+  }, [adminRecipients, chatContacts, requests, user.uid]);
 
   useEffect(() => {
     if (admin && !contacts.some((contact) => contact.uid === selectedContactUid)) {
@@ -144,6 +162,12 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       setSelectedAdminUid(adminRecipients[0]?.uid ?? "");
     }
   }, [admin, adminRecipients, selectedAdminUid]);
+
+  useEffect(() => {
+    if (admin && !contacts.some((contact) => contact.uid === newContactUid)) {
+      setNewContactUid(contacts[0]?.uid ?? "");
+    }
+  }, [admin, contacts, newContactUid]);
 
   const chatUid = admin ? selectedContactUid : user.uid;
   const threadKey = admin ? user.uid : selectedAdminUid;
@@ -249,21 +273,18 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       return;
     }
     let knownIds: Set<string> | null = null;
-    return onValue(
-      ref(db, `chats/${chatUid}/threads/${threadKey}`),
+    const messagesQuery = query(
+      ref(db, `chats/${chatUid}/threads/${threadKey}/messages`),
+      orderByChild("createdAt"),
+      limitToLast(100),
+    );
+    const stopMessages = onValue(
+      messagesQuery,
       (snapshot) => {
-        const thread = snapshot.val() as { messages?: unknown; readBy?: Record<string, unknown> } | null;
-        const loaded = entries<Omit<MessageDocument, "id">>(thread?.messages)
+        const loaded = entries<Omit<MessageDocument, "id">>(snapshot.val())
           .map(([id, message]) => ({ ...message, id }))
           .sort((a, b) => a.createdAt - b.createdAt);
-        const readAt = Number(thread?.readBy?.[user.uid] ?? 0);
-        setLastReadAt(readAt);
         setLoadedThreadKey(`${chatUid}:${threadKey}`);
-        if (!admin) {
-          setUnreadByContact({
-            [user.uid]: loaded.filter((message) => message.senderUid !== user.uid && message.createdAt > readAt).length,
-          });
-        }
         const previousIds = knownIds;
         if (!admin && previousIds && typeof Notification !== "undefined" && Notification.permission === "granted") {
           for (const message of loaded) {
@@ -275,7 +296,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                 );
                 notification.onclick = () => {
                   window.focus();
-                  setOpen(true);
+                  onOpenMessages();
                 };
               } catch (cause) {
                 setError(cause instanceof Error ? cause.message : "Không hiển thị được thông báo chat.");
@@ -289,14 +310,27 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       },
       (cause) => setError(`Không tải được tin nhắn: ${cause.message}`),
     );
-  }, [admin, chatUid, threadKey, user.uid]);
+    const stopReadState = onValue(
+      ref(db, `chats/${chatUid}/threads/${threadKey}/readBy/${user.uid}`),
+      (snapshot) => setLastReadAt(Number(snapshot.val() ?? 0)),
+      (cause) => setError(`Không tải được trạng thái đã đọc: ${cause.message}`),
+    );
+    return () => {
+      stopMessages();
+      stopReadState();
+    };
+  }, [admin, chatUid, onOpenMessages, threadKey, user.uid]);
 
   const unreadMessageCount = admin
     ? Object.values(unreadByContact).reduce((sum, count) => sum + count, 0)
     : unreadByContact[user.uid] ?? 0;
 
   useEffect(() => {
-    if (!open || !db || !chatUid || loadedThreadKey !== `${chatUid}:${threadKey}`) return;
+    onUnreadCountChange(unreadMessageCount);
+  }, [onUnreadCountChange, unreadMessageCount]);
+
+  useEffect(() => {
+    if (!active || !db || !chatUid || loadedThreadKey !== `${chatUid}:${threadKey}`) return;
     const newestIncoming = messages.reduce(
       (latest, message) => message.senderUid !== user.uid
         ? Math.max(latest, message.createdAt)
@@ -306,7 +340,14 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
     if (newestIncoming <= lastReadAt) return;
     void set(ref(db, `chats/${chatUid}/threads/${threadKey}/readBy/${user.uid}`), newestIncoming)
       .catch((cause: unknown) => setError(`Không đánh dấu được tin nhắn đã đọc: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`));
-  }, [chatUid, lastReadAt, loadedThreadKey, messages, open, threadKey, user.uid]);
+  }, [active, chatUid, lastReadAt, loadedThreadKey, messages, threadKey, user.uid]);
+
+  useEffect(() => {
+    if (admin || loadedThreadKey !== `${chatUid}:${threadKey}`) return;
+    setUnreadByContact({
+      [user.uid]: messages.filter((message) => message.senderUid !== user.uid && message.createdAt > lastReadAt).length,
+    });
+  }, [admin, chatUid, lastReadAt, loadedThreadKey, messages, threadKey, user.uid]);
 
   async function enableNotifications() {
     if (typeof Notification === "undefined") return;
@@ -352,56 +393,84 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
   }
 
   return (
-    <div className="chat-widget">
-      {open && (
+    <section className="messages-page" hidden={hidden}>
+      <div className="page-heading">
+        <div><p className="eyebrow">HỘI THOẠI</p><h1>Tin nhắn</h1><p className="muted">Trao đổi riêng giữa quản trị viên và người dùng.</p></div>
+        {permission !== "granted" && permission !== "unsupported" && (
+          <button
+            className="button secondary notification-permission"
+            disabled={permission === "denied"}
+            title={permission === "denied" ? "Cho phép thông báo trong cài đặt trình duyệt." : "Cho phép thông báo trên trình duyệt này."}
+            onClick={() => void enableNotifications()}
+          >
+            {permission === "denied" ? "Thông báo đã bị chặn" : "Bật thông báo"}
+          </button>
+        )}
+      </div>
+      <div className="messages-layout">
+        <aside className="panel conversation-list" aria-label="Danh sách cuộc trò chuyện">
+          <div className="conversation-list-heading">
+            <strong>{admin ? "Người dùng" : "Quản trị viên"}</strong>
+            <span className="count">{admin ? contacts.length : adminRecipients.length}</span>
+          </div>
+          {admin && contacts.length > 0 && (
+            <button
+              className="button secondary conversation-new-button"
+              onClick={() => setShowNewConversation((visible) => !visible)}
+            >
+              {showNewConversation ? "Đóng chọn người dùng" : "+ Cuộc trò chuyện mới"}
+            </button>
+          )}
+          {admin && showNewConversation && (
+            <div className="conversation-new-form">
+              <select className="text-input" aria-label="Chọn người dùng để trò chuyện" value={newContactUid} onChange={(event) => setNewContactUid(event.target.value)}>
+                {contacts.map((contact) => <option key={contact.uid} value={contact.uid}>{[contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email}</option>)}
+              </select>
+              <button className="button primary" disabled={!newContactUid} onClick={() => { setSelectedContactUid(newContactUid); setShowNewConversation(false); }}>Mở hội thoại</button>
+            </div>
+          )}
+          <div className="conversation-list-items">
+            {admin ? (
+              <>
+                {chatContacts
+                  .slice()
+                  .sort((a, b) => (b.lastMessageAt ?? 0) - (a.lastMessageAt ?? 0))
+                  .map((contact) => (
+                    <button key={contact.uid} className={`conversation-contact ${selectedContactUid === contact.uid ? "active" : ""}`} onClick={() => setSelectedContactUid(contact.uid)}>
+                      <strong>{[contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email}</strong>
+                      <span>{contact.lastMessage || contact.email}</span>
+                      {unreadByContact[contact.uid] > 0 && <span className="conversation-unread">{unreadByContact[contact.uid]} tin chưa đọc</span>}
+                    </button>
+                  ))}
+                {contacts.filter((contact) => !chatContacts.some((conversation) => conversation.uid === contact.uid)).map((contact) => (
+                  <button key={contact.uid} className={`conversation-contact ${selectedContactUid === contact.uid ? "active" : ""}`} onClick={() => setSelectedContactUid(contact.uid)}>
+                    <strong>{[contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email}</strong>
+                    <span>{contact.email} · Chưa có tin nhắn</span>
+                  </button>
+                ))}
+                {contacts.length === 0 && <p className="muted small conversation-empty">Chưa có người dùng để trò chuyện.</p>}
+              </>
+            ) : (
+              adminRecipients.map((recipient) => (
+                <button key={recipient.uid} className={`conversation-contact ${selectedAdminUid === recipient.uid ? "active" : ""}`} onClick={() => setSelectedAdminUid(recipient.uid)}>
+                  <strong>{recipient.label}</strong>
+                  <span>{recipient.email}</span>
+                </button>
+              ))
+            )}
+            {!admin && adminRecipients.length === 0 && <p className="muted small conversation-empty">Chưa có quản trị viên để trò chuyện.</p>}
+          </div>
+        </aside>
         <section className="chat-window panel" aria-label="Trò chuyện">
           <header className="chat-window-header">
             <div>
-              <strong>Trò chuyện</strong>
-              <span>{admin ? "Với nhà cung cấp" : contactName}</span>
+              <strong>{admin ? "Với người dùng" : contactName}</strong>
+              <span>{admin ? activeContact?.email || "Chọn người dùng để bắt đầu hội thoại" : contactName}</span>
             </div>
-            {!admin && adminRecipients.length > 0 && (
-              <select
-                className="text-input chat-contact-select"
-                aria-label="Chọn admin để chat"
-                value={selectedAdminUid}
-                onChange={(event) => setSelectedAdminUid(event.target.value)}
-              >
-                {adminRecipients.map((recipient) => (
-                  <option key={recipient.uid} value={recipient.uid}>{recipient.label}</option>
-                ))}
-              </select>
-            )}
-            {admin && contacts.length > 0 && (
-              <select
-                className="text-input chat-contact-select"
-                aria-label="Chọn nhà cung cấp"
-                value={selectedContactUid}
-                onChange={(event) => setSelectedContactUid(event.target.value)}
-              >
-                {contacts.map((contact) => (
-                  <option key={contact.uid} value={contact.uid}>
-                    {[contact.supplierName, contact.name].filter(Boolean).join(" · ")} · {contact.email}
-                    {unreadByContact[contact.uid] ? ` · ${unreadByContact[contact.uid]} tin mới` : ""}
-                  </option>
-                ))}
-              </select>
-            )}
-            {permission !== "granted" && permission !== "unsupported" && (
-              <button
-                className="button plain notification-permission"
-                disabled={permission === "denied"}
-                title={permission === "denied" ? "Cho phép thông báo trong cài đặt trình duyệt." : "Cho phép thông báo trên trình duyệt này."}
-                onClick={() => void enableNotifications()}
-              >
-                {permission === "denied" ? "Thông báo đã bị chặn" : "Bật thông báo"}
-              </button>
-            )}
-            <button className="chat-close" aria-label="Đóng cửa sổ chat" onClick={() => setOpen(false)}>×</button>
           </header>
           <div className="chat-widget-messages" aria-live="polite">
             {!chatUid ? (
-              <p className="muted small">Chưa có nhà cung cấp để trò chuyện.</p>
+              <p className="muted small">Chọn một người trong danh sách để xem hoặc bắt đầu trò chuyện.</p>
             ) : messages.length === 0 ? (
               <p className="muted small">Chưa có tin nhắn. Bắt đầu trò chuyện tại đây.</p>
             ) : messages.map((message) => {
@@ -424,7 +493,6 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                       className="message-mention"
                       onClick={() => {
                         onOpenMention(mention);
-                        setOpen(false);
                       }}
                     >
                       ↗ {mention.label}
@@ -540,20 +608,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
             </button>
           </form>
         </section>
-      )}
-      <button
-        className="chat-launcher"
-        aria-label={open ? "Đóng chat" : "Mở chat"}
-        aria-expanded={open}
-        title="Trò chuyện"
-        onClick={() => setOpen((current) => !current)}
-      >
-        {unreadMessageCount > 0 && <span className="chat-unread-badge">{unreadMessageCount > 99 ? "99+" : unreadMessageCount}</span>}
-        <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-2 2v-7.5A7.5 7.5 0 1 1 20 11.5Z" />
-          <path d="M8 11h.01M12 11h.01M16 11h.01" />
-        </svg>
-      </button>
-    </div>
+      </div>
+    </section>
   );
 }
