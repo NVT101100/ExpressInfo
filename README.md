@@ -22,6 +22,8 @@
    firebase deploy --only database,hosting
    ```
 
+   Khi deploy bằng GitHub Actions, thêm các repository secrets mà workflow sử dụng: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_DATABASE_URL` và `FIREBASE_TOKEN`. Các biến `VITE_*` được nhúng vào ứng dụng trong bước build; sau khi đổi secrets, cần chạy lại workflow để deploy bản build mới.
+
 Khi tải hồ sơ lần đầu, ứng dụng yêu cầu nhà cung cấp xác nhận lại tài khoản Google và cấp quyền `drive.file`; quyền này được dùng để tải trực tiếp lên thư mục Drive, không lưu access token vào Realtime Database.
 
 ## Cấu hình file Excel
