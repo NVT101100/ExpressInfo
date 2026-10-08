@@ -625,7 +625,7 @@ function App() {
   }
 
   async function handleRequestDeliveryDateChanges(selection: DeliveryDateChangeSelection[]) {
-    if (!db || !user || !admin) return;
+    if (!db || !user) return;
     const database = db;
     if (selection.length === 0) {
       setError("Chọn ít nhất một mặt hàng và đặt ngày giao mới cho từng mặt hàng.");
@@ -641,8 +641,14 @@ function App() {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.requestedDate)) {
           throw new Error("Hãy chọn ngày giao mới hợp lệ cho tất cả mặt hàng đã chọn.");
         }
+        if (!Number.isInteger(entry.itemIndex) || entry.itemIndex < 0) {
+          throw new Error("Một trong các mặt hàng đã chọn không hợp lệ.");
+        }
         const request = requests.find((candidate) => candidate.id === entry.requestId);
         if (!request || request.deleted) throw new Error("Không tìm thấy một trong các phiếu đã chọn.");
+        if (!admin && request.ownerUid !== user.uid) {
+          throw new Error("Bạn chỉ có thể gửi đề nghị đổi ngày cho phiếu của mình.");
+        }
         const item = request.items[entry.itemIndex];
         if (!item) throw new Error("Không tìm thấy một trong các mặt hàng đã chọn.");
         if (entry.requestedDate === item.expectedDeliveryDate) {
@@ -665,8 +671,8 @@ function App() {
         if (!proposalRef.key) throw new Error("Không tạo được mã yêu cầu đổi ngày.");
         await set(proposalRef, {
           itemIndex,
-          itemName: item.name ?? "",
-          itemSku: item.sku ?? "",
+          itemName: (item.materialName || item.name || "").slice(0, 240),
+          itemSku: (item.sku || item.skuNumber || item.poNumber || "").slice(0, 120),
           currentDate: item.expectedDeliveryDate ?? "",
           requestedDate,
           status: "pending",
@@ -685,21 +691,24 @@ function App() {
       await Promise.all([...byRequest].map(([, entriesForRequest]) => {
         const first = entriesForRequest[0];
         const summary = entriesForRequest
-          .map(({ item, itemIndex, requestedDate }) => `${item.name || `dòng ${itemIndex + 1}`}: ${requestedDate}`)
+          .map(({ item, itemIndex, requestedDate }) => `${item.materialName || item.name || `dòng ${itemIndex + 1}`}: ${requestedDate}`)
           .join("; ")
           .slice(0, 330);
+        const senderName = profile.displayName || user.displayName || user.email || (admin ? "Quản trị viên" : first.request.supplierName);
         return notify(
           first.request.id,
-          `${first.request.supplierName} · Admin đề nghị đổi ngày cho ${entriesForRequest.length} mặt hàng: ${summary}.`,
+          `${first.request.supplierName} · ${admin ? "Admin" : "Nhà cung cấp"} đề nghị đổi ngày cho ${entriesForRequest.length} mặt hàng: ${summary}.`,
           {
             event: "delivery_date_requested",
             supplierName: first.request.supplierName,
-            senderName: profile.displayName || user.displayName || user.email || "Quản trị viên",
+            senderName,
           },
-          { recipientRole: "supplier", recipientUid: first.request.ownerUid },
+          admin
+            ? { recipientRole: "supplier", recipientUid: first.request.ownerUid }
+            : { recipientRole: "admin" },
         );
       }));
-      setNotice(`Đã gửi ${validated.length} yêu cầu thay đổi ngày giao cho nhà cung cấp.`);
+      setNotice(`Đã gửi ${validated.length} đề nghị đổi ngày giao ${admin ? "cho nhà cung cấp" : "đến admin"}.`);
       setPage("deliveryDateRequests");
     } catch (cause) {
       setError(`Không gửi được các yêu cầu thay đổi ngày giao: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
@@ -715,14 +724,21 @@ function App() {
   ) {
     const targetRequest = requests.find((request) => request.id === requestId);
     const proposal = targetRequest?.deliveryDateRequests.find((entry) => entry.id === proposalId);
-    if (!db || !user || !targetRequest || targetRequest.deleted || targetRequest.ownerUid !== user.uid || !proposal) return;
+    if (!db || !user || !targetRequest || targetRequest.deleted || !proposal) return;
+    const canRespond = admin
+      ? proposal.createdByUid === targetRequest.ownerUid
+      : targetRequest.ownerUid === user.uid && proposal.createdByUid !== user.uid;
+    if (!canRespond) {
+      setError("Bạn không có quyền phản hồi đề nghị đổi ngày này.");
+      return;
+    }
     if (proposal.status !== "pending") {
       setError("Yêu cầu này đã được phản hồi trước đó.");
       return;
     }
     const item = targetRequest.items[proposal.itemIndex];
     if (accept && (!item || item.expectedDeliveryDate !== proposal.currentDate)) {
-      setError("Mặt hàng hoặc ngày giao đã thay đổi sau khi admin gửi yêu cầu. Vui lòng liên hệ admin để gửi yêu cầu mới.");
+      setError("Mặt hàng hoặc ngày giao đã thay đổi sau khi gửi đề nghị. Vui lòng gửi đề nghị mới.");
       return;
     }
     setSaving(true);
@@ -762,18 +778,21 @@ function App() {
         };
       }
       await update(ref(db), updates);
+      const responder = admin ? "Admin" : "Nhà cung cấp";
       const responseText = accept
-        ? `Nhà cung cấp đã chấp nhận đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}" sang ${proposal.requestedDate}.`
-        : `Nhà cung cấp đã từ chối đề nghị đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}".`;
+        ? `${responder} đã chấp nhận đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}" sang ${proposal.requestedDate}.`
+        : `${responder} đã từ chối đề nghị đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}".`;
       await notify(
         targetRequest.id,
         `${targetRequest.supplierName} · ${responseText}`,
         {
           event: "delivery_date_response",
           supplierName: targetRequest.supplierName,
-          senderName: profile.displayName || user.displayName || user.email || "Nhà cung cấp",
+          senderName: profile.displayName || user.displayName || user.email || responder,
         },
-        { recipientRole: "admin" },
+        proposal.createdByUid === targetRequest.ownerUid
+          ? { recipientRole: "supplier", recipientUid: targetRequest.ownerUid }
+          : { recipientRole: "admin" },
       );
       setNotice(accept ? "Đã chấp nhận yêu cầu; ngày giao mặt hàng được cập nhật." : "Đã từ chối yêu cầu thay đổi ngày giao.");
     } catch (cause) {
@@ -1152,6 +1171,7 @@ function App() {
             <DeliveryDateRequestsPage
               requests={requests.filter((request) => !request.deleted)}
               admin={admin}
+              currentUserUid={user.uid}
               saving={saving}
               onSubmit={(selection) => void handleRequestDeliveryDateChanges(selection)}
               onRespond={(requestId, proposalId, accept) => void handleRespondToDeliveryDateChange(proposalId, accept, requestId)}

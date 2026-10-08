@@ -341,6 +341,8 @@ td strong { color: #29392f; font-size: 11px; }
 .delivery-date-proposal-form { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr) auto; gap: 11px; align-items: end; }
 .delivery-date-proposal-form .button { min-height: 39px; white-space: nowrap; }
 .delivery-date-page { max-width: 1120px; margin: 0 auto; }
+.delivery-date-filters-panel { margin-bottom: 16px; padding-top: 15px; }
+.delivery-date-filters-panel > .filters { padding: 0 20px; }
 .delivery-date-selection-panel, .delivery-date-history-panel, .delivery-date-inbox { margin-top: 16px; }
 .delivery-date-selection-heading, .delivery-date-select-request, .delivery-date-submit-row, .delivery-date-inbox-row, .delivery-date-history-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .delivery-date-selection-heading { margin-bottom: 12px; }
@@ -357,6 +359,10 @@ td strong { color: #29392f; font-size: 11px; }
 .delivery-date-select-all:disabled { opacity: .45; }
 .delivery-date-new-date { display: grid; gap: 5px; color: #65736b; font-size: 10px; }
 .delivery-date-new-date .text-input { width: 100%; }
+.delivery-date-item-details { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 4px; padding: 10px; border-radius: 8px; background: #f7faf8; }
+.delivery-date-item-details > span { display: grid; min-width: 0; gap: 3px; }
+.delivery-date-item-details small { color: #85928a; font-size: 9px; }
+.delivery-date-item-details strong { overflow-wrap: anywhere; color: #35483b; font-size: 10px; font-weight: 600; }
 .delivery-date-proposal-status { width: fit-content; padding: 4px 8px; border-radius: 12px; color: #886622; background: #fff5df; font-size: 10px; }
 .delivery-date-proposal-status.accepted { color: #19704a; background: #e6f5ec; }
 .delivery-date-proposal-status.rejected { color: #a13b36; background: #fff0ee; }
@@ -505,6 +511,7 @@ td strong { color: #29392f; font-size: 11px; }
   .delivery-date-proposal { align-items: flex-start; flex-direction: column; }
   .delivery-date-select-row { grid-template-columns: 22px minmax(0, 1fr); }
   .delivery-date-new-date { grid-column: 2; }
+  .delivery-date-item-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .delivery-date-inbox-row { flex-direction: column; }
   .delivery-date-inbox-row .delivery-date-proposal-actions { width: 100%; }
   .delivery-date-proposal-actions .button { flex: 1; }
