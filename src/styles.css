@@ -340,6 +340,34 @@ td strong { color: #29392f; font-size: 11px; }
 .delivery-date-proposal-actions { display: flex; flex: 0 0 auto; gap: 7px; }
 .delivery-date-proposal-form { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr) auto; gap: 11px; align-items: end; }
 .delivery-date-proposal-form .button { min-height: 39px; white-space: nowrap; }
+.delivery-date-page { max-width: 1120px; margin: 0 auto; }
+.delivery-date-selection-panel, .delivery-date-history-panel, .delivery-date-inbox { margin-top: 16px; }
+.delivery-date-selection-heading, .delivery-date-select-request, .delivery-date-submit-row, .delivery-date-inbox-row, .delivery-date-history-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
+.delivery-date-selection-heading { margin-bottom: 12px; }
+.delivery-date-selection-heading h2, .delivery-date-selection-heading p { margin-bottom: 4px; }
+.delivery-date-selection-list { display: grid; }
+.delivery-date-select-row { display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(145px, 190px); align-items: center; gap: 13px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.delivery-date-checkbox { display: flex; align-items: center; justify-content: center; }
+.delivery-date-checkbox input { width: 16px; height: 16px; accent-color: var(--green); }
+.delivery-date-select-info { display: grid; min-width: 0; gap: 5px; }
+.delivery-date-select-info > strong { color: #29392f; font-size: 12px; }
+.delivery-date-select-info > span, .delivery-date-select-info small { color: #65736b; font-size: 11px; }
+.delivery-date-request-link { width: fit-content; border: 0; padding: 0; color: var(--green); background: transparent; text-align: left; font-size: 11px; font-weight: 700; }
+.delivery-date-select-all { border: 0; padding: 3px 0; color: #65736b; background: transparent; font-size: 10px; }
+.delivery-date-select-all:disabled { opacity: .45; }
+.delivery-date-new-date { display: grid; gap: 5px; color: #65736b; font-size: 10px; }
+.delivery-date-new-date .text-input { width: 100%; }
+.delivery-date-proposal-status { width: fit-content; padding: 4px 8px; border-radius: 12px; color: #886622; background: #fff5df; font-size: 10px; }
+.delivery-date-proposal-status.accepted { color: #19704a; background: #e6f5ec; }
+.delivery-date-proposal-status.rejected { color: #a13b36; background: #fff0ee; }
+.delivery-date-submit-row { justify-content: flex-end; margin-top: 15px; }
+.delivery-date-history-row, .delivery-date-inbox-row { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.delivery-date-history-row > div { display: grid; gap: 5px; }
+.delivery-date-history-row strong { color: #35483b; font-size: 11px; }
+.delivery-date-history-row span { color: #65736b; font-size: 11px; }
+.delivery-date-inbox-row { align-items: flex-start; }
+.delivery-date-inbox-row .delivery-date-proposal-copy { flex: 1; }
+.delivery-date-history-heading { margin-top: 24px; }
 .detail-actions { display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--line); margin-top: 19px; padding-top: 17px; }
 .status-select { width: 145px; }
 .history-panel { margin-top: 16px; }
@@ -475,6 +503,12 @@ td strong { color: #29392f; font-size: 11px; }
   .conversation-list { min-height: 0; max-height: 245px; }
   .delivery-date-proposal-form { grid-template-columns: minmax(0, 1fr); }
   .delivery-date-proposal { align-items: flex-start; flex-direction: column; }
+  .delivery-date-select-row { grid-template-columns: 22px minmax(0, 1fr); }
+  .delivery-date-new-date { grid-column: 2; }
+  .delivery-date-inbox-row { flex-direction: column; }
+  .delivery-date-inbox-row .delivery-date-proposal-actions { width: 100%; }
+  .delivery-date-proposal-actions .button { flex: 1; }
+  .delivery-date-submit-row { align-items: stretch; flex-direction: column-reverse; }
   .chat-window { min-height: 58vh; max-height: 72vh; }
   .notification-list .notification-item { padding: 11px; }
 }

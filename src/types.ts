@@ -79,6 +79,12 @@ export interface DeliveryDateRequest {
   responseByUid?: string;
 }
 
+export interface DeliveryDateChangeSelection {
+  requestId: string;
+  itemIndex: number;
+  requestedDate: string;
+}
+
 export interface NotificationDocument {
   id: string;
   requestId: string;

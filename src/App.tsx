@@ -20,6 +20,7 @@ import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "./config";
 import AdminPage from "./components/AdminPage";
 import ChatWidget from "./components/ChatWidget";
 import DeepAdminPage from "./components/DeepAdminPage";
+import DeliveryDateRequestsPage from "./components/DeliveryDateRequestsPage";
 import Pagination from "./components/Pagination";
 import ProfilePage from "./components/ProfilePage";
 import RequestDetail from "./components/RequestDetail";
@@ -46,16 +47,18 @@ import {
 } from "./lib/googleDrive";
 import type {
   ActivityAction,
+  DeliveryDateChangeSelection,
   DeliveryItem,
   DeliveryRequest,
   ItemFieldChange,
   MentionTarget,
+  NotificationDocument,
   RequestChanges,
   RequestAttachments,
   RequestStatus,
 } from "./types";
 
-type Page = "supplier" | "admin" | "deepAdmin" | "profile" | "messages" | "notifications";
+type Page = "supplier" | "admin" | "deepAdmin" | "profile" | "messages" | "notifications" | "deliveryDateRequests";
 
 function NotificationActions({
   open,
@@ -255,11 +258,15 @@ function App() {
                 ? "Nhắc lịch giao hàng"
                 : notification.event === "delivery_overdue"
                   ? "Phiếu giao hàng đã trễ hạn"
-                : notification.event === "delivery_confirmed"
-                  ? "Đã xác nhận giao hàng"
-                  : notification.event === "request_status"
-                    ? "Cập nhật trạng thái phiếu giao hàng"
-                    : "Thông báo giao hàng";
+                  : notification.event === "delivery_confirmed"
+                    ? "Đã xác nhận giao hàng"
+                    : notification.event === "delivery_date_requested"
+                      ? "Yêu cầu đổi ngày giao hàng"
+                      : notification.event === "delivery_date_response"
+                        ? "Phản hồi yêu cầu đổi ngày giao"
+                        : notification.event === "request_status"
+                          ? "Cập nhật trạng thái phiếu giao hàng"
+                          : "Thông báo giao hàng";
             const desktopNotification = new Notification(title, {
               body: notification.text,
               tag: `delivery-${notification.id}`,
@@ -268,7 +275,11 @@ function App() {
             desktopNotification.onclick = () => {
               window.focus();
               void markNotificationRead(notification.id);
-              if (notification.requestId) {
+              if (notification.event === "delivery_date_requested" || notification.event === "delivery_date_response") {
+                setSelectedId(null);
+                setHighlightTarget(null);
+                setPage("deliveryDateRequests");
+              } else if (notification.requestId) {
                 setPage(admin ? "admin" : "supplier");
                 setSelectedId(notification.requestId);
               }
@@ -613,59 +624,85 @@ function App() {
     await set(revisionRef, revision);
   }
 
-  async function handleRequestDeliveryDateChange(
-    itemIndex: number,
-    requestedDate: string,
-    requestId = selected?.id,
-  ) {
-    const targetRequest = requests.find((request) => request.id === requestId);
-    if (!db || !user || !admin || !targetRequest || targetRequest.deleted) return;
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
-      setError("Hãy chọn ngày giao mới hợp lệ.");
+  async function handleRequestDeliveryDateChanges(selection: DeliveryDateChangeSelection[]) {
+    if (!db || !user || !admin) return;
+    const database = db;
+    if (selection.length === 0) {
+      setError("Chọn ít nhất một mặt hàng và đặt ngày giao mới cho từng mặt hàng.");
       return;
     }
-    const item = targetRequest.items[itemIndex];
-    if (!item) {
-      setError("Không tìm thấy mặt hàng cần đổi ngày giao.");
-      return;
-    }
-    if (requestedDate === item.expectedDeliveryDate) {
-      setError("Ngày đề xuất phải khác ngày giao hiện tại của mặt hàng.");
-      return;
-    }
-    if (targetRequest.deliveryDateRequests.some((proposal) => proposal.itemIndex === itemIndex && proposal.status === "pending")) {
-      setError("Mặt hàng này đã có yêu cầu đang chờ nhà cung cấp phản hồi.");
+    let validated: Array<DeliveryDateChangeSelection & { request: DeliveryRequest; item: DeliveryItem }>;
+    try {
+      const uniqueKeys = new Set<string>();
+      validated = selection.map((entry) => {
+        const key = `${entry.requestId}:${entry.itemIndex}`;
+        if (uniqueKeys.has(key)) throw new Error("Một mặt hàng bị chọn nhiều lần.");
+        uniqueKeys.add(key);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.requestedDate)) {
+          throw new Error("Hãy chọn ngày giao mới hợp lệ cho tất cả mặt hàng đã chọn.");
+        }
+        const request = requests.find((candidate) => candidate.id === entry.requestId);
+        if (!request || request.deleted) throw new Error("Không tìm thấy một trong các phiếu đã chọn.");
+        const item = request.items[entry.itemIndex];
+        if (!item) throw new Error("Không tìm thấy một trong các mặt hàng đã chọn.");
+        if (entry.requestedDate === item.expectedDeliveryDate) {
+          throw new Error("Ngày giao mới phải khác ngày hiện tại ở tất cả mặt hàng đã chọn.");
+        }
+        if (request.deliveryDateRequests.some((proposal) => proposal.itemIndex === entry.itemIndex && proposal.status === "pending")) {
+          throw new Error("Một trong các mặt hàng đã có yêu cầu đang chờ phản hồi.");
+        }
+        return { ...entry, request, item };
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Các mặt hàng đã chọn không hợp lệ.");
       return;
     }
     setSaving(true);
     setError("");
     try {
-      const proposalRef = push(ref(db, `requests/${targetRequest.id}/deliveryDateRequests`));
-      if (!proposalRef.key) throw new Error("Không tạo được mã yêu cầu đổi ngày.");
-      await set(proposalRef, {
-        itemIndex,
-        itemName: item.name ?? "",
-        itemSku: item.sku ?? "",
-        currentDate: item.expectedDeliveryDate ?? "",
-        requestedDate,
-        status: "pending",
-        createdAt: serverTimestamp(),
-        createdByUid: user.uid,
-        createdByEmail: user.email ?? "",
-      });
-      await notify(
-        targetRequest.id,
-        `${targetRequest.supplierName} · Admin đề nghị đổi ngày giao mặt hàng "${item.name || `dòng ${itemIndex + 1}`}" từ ${item.expectedDeliveryDate} sang ${requestedDate}.`,
-        {
-          event: "delivery_date_requested",
-          supplierName: targetRequest.supplierName,
-          senderName: profile.displayName || user.displayName || user.email || "Quản trị viên",
-        },
-        { recipientRole: "supplier", recipientUid: targetRequest.ownerUid },
-      );
-      setNotice("Đã gửi yêu cầu thay đổi ngày giao cho nhà cung cấp.");
+      await Promise.all(validated.map(async ({ request, item, itemIndex, requestedDate }) => {
+        const proposalRef = push(ref(database, `requests/${request.id}/deliveryDateRequests`));
+        if (!proposalRef.key) throw new Error("Không tạo được mã yêu cầu đổi ngày.");
+        await set(proposalRef, {
+          itemIndex,
+          itemName: item.name ?? "",
+          itemSku: item.sku ?? "",
+          currentDate: item.expectedDeliveryDate ?? "",
+          requestedDate,
+          status: "pending",
+          createdAt: serverTimestamp(),
+          createdByUid: user.uid,
+          createdByEmail: user.email ?? "",
+        });
+      }));
+
+      const byRequest = new Map<string, typeof validated>();
+      for (const entry of validated) {
+        const current = byRequest.get(entry.request.id) ?? [];
+        current.push(entry);
+        byRequest.set(entry.request.id, current);
+      }
+      await Promise.all([...byRequest].map(([, entriesForRequest]) => {
+        const first = entriesForRequest[0];
+        const summary = entriesForRequest
+          .map(({ item, itemIndex, requestedDate }) => `${item.name || `dòng ${itemIndex + 1}`}: ${requestedDate}`)
+          .join("; ")
+          .slice(0, 330);
+        return notify(
+          first.request.id,
+          `${first.request.supplierName} · Admin đề nghị đổi ngày cho ${entriesForRequest.length} mặt hàng: ${summary}.`,
+          {
+            event: "delivery_date_requested",
+            supplierName: first.request.supplierName,
+            senderName: profile.displayName || user.displayName || user.email || "Quản trị viên",
+          },
+          { recipientRole: "supplier", recipientUid: first.request.ownerUid },
+        );
+      }));
+      setNotice(`Đã gửi ${validated.length} yêu cầu thay đổi ngày giao cho nhà cung cấp.`);
+      setPage("deliveryDateRequests");
     } catch (cause) {
-      setError(`Không gửi được yêu cầu thay đổi ngày giao: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
+      setError(`Không gửi được các yêu cầu thay đổi ngày giao: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
     } finally {
       setSaving(false);
     }
@@ -674,7 +711,7 @@ function App() {
   async function handleRespondToDeliveryDateChange(
     proposalId: string,
     accept: boolean,
-    requestId = selected?.id,
+    requestId: string,
   ) {
     const targetRequest = requests.find((request) => request.id === requestId);
     const proposal = targetRequest?.deliveryDateRequests.find((entry) => entry.id === proposalId);
@@ -1009,6 +1046,16 @@ function App() {
     void recordActivity("page_opened", `Mở trang ${target}.`);
   };
 
+  const openNotification = (notification: NotificationDocument) => {
+    void markNotificationRead(notification.id);
+    if (notification.event === "delivery_date_requested" || notification.event === "delivery_date_response") {
+      openPage("deliveryDateRequests");
+      return;
+    }
+    setPage(admin ? "admin" : "supplier");
+    openRequest(notification.requestId);
+  };
+
   const openMentionedContent = (target: MentionTarget) => {
     setHighlightTarget(target);
     setSelectedId(target.requestId);
@@ -1039,6 +1086,14 @@ function App() {
             <span className="nav-icon">✉</span> Tin nhắn
             {unreadMessageCount > 0 && <span className="count nav-count">{unreadMessageCount > 99 ? "99+" : unreadMessageCount}</span>}
           </button>
+          <button className={`nav-item ${page === "deliveryDateRequests" ? "active" : ""}`} onClick={() => openPage("deliveryDateRequests")}>
+            <span className="nav-icon">↔</span> Đổi ngày giao hàng
+            {!admin && requests.reduce((count, request) => count + request.deliveryDateRequests.filter((proposal) => proposal.status === "pending").length, 0) > 0 && (
+              <span className="count nav-count">
+                {requests.reduce((count, request) => count + request.deliveryDateRequests.filter((proposal) => proposal.status === "pending").length, 0)}
+              </span>
+            )}
+          </button>
           <button className={`nav-item ${page === "notifications" ? "active" : ""}`} onClick={() => openPage("notifications")}>
             <span className="nav-icon">♧</span> Thông báo
             {unreadNotificationCount > 0 && <span className="count nav-count">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
@@ -1056,7 +1111,7 @@ function App() {
             </div>
             {visibleNotifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : visibleNotifications.slice(0, 10).map((notification) => (
               <div key={notification.id} className="sidebar-notification">
-                <button className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`} onClick={() => { void markNotificationRead(notification.id); setPage(admin ? "admin" : "supplier"); openRequest(notification.requestId); }}>
+                <button className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`} onClick={() => openNotification(notification)}>
                   {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}<span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
                 </button>
                 <NotificationActions
@@ -1093,7 +1148,19 @@ function App() {
               || "Nhà cung cấp"
             }
           />
-          {page !== "messages" && (page === "notifications" ? (
+          {page !== "messages" && (page === "deliveryDateRequests" ? (
+            <DeliveryDateRequestsPage
+              requests={requests.filter((request) => !request.deleted)}
+              admin={admin}
+              saving={saving}
+              onSubmit={(selection) => void handleRequestDeliveryDateChanges(selection)}
+              onRespond={(requestId, proposalId, accept) => void handleRespondToDeliveryDateChange(proposalId, accept, requestId)}
+              onOpenRequest={(requestId) => {
+                setPage(admin ? "admin" : "supplier");
+                openRequest(requestId);
+              }}
+            />
+          ) : page === "notifications" ? (
             <section className="notifications-page">
               <div className="page-heading">
                 <div><p className="eyebrow">CẬP NHẬT</p><h1>Thông báo</h1><p className="muted">Toàn bộ thông báo mới nhất của bạn.</p></div>
@@ -1105,9 +1172,7 @@ function App() {
                     <button
                       className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`}
                       onClick={() => {
-                        void markNotificationRead(notification.id);
-                        setPage(admin ? "admin" : "supplier");
-                        openRequest(notification.requestId);
+                        openNotification(notification);
                       }}
                     >
                       {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}
@@ -1171,8 +1236,6 @@ function App() {
                 onDeliveryDate={setDeliveryDate}
                 onItemChange={updateItem}
                 onRemoveItem={removeItem}
-                onRequestDeliveryDateChange={(itemIndex, requestedDate) => void handleRequestDeliveryDateChange(itemIndex, requestedDate)}
-                onRespondToDeliveryDateChange={(proposalId, accept) => void handleRespondToDeliveryDateChange(proposalId, accept)}
                 planFileName={planFileName}
                 introductionFileName={introductionFileName}
                 onPlanFile={(file) => void handlePlanFile(file)}
@@ -1201,8 +1264,6 @@ function App() {
                   onDeliveryDate={setDeliveryDate}
                   onItemChange={updateItem}
                   onRemoveItem={removeItem}
-                  onRequestDeliveryDateChange={(itemIndex, requestedDate) => void handleRequestDeliveryDateChange(itemIndex, requestedDate)}
-                  onRespondToDeliveryDateChange={(proposalId, accept) => void handleRespondToDeliveryDateChange(proposalId, accept)}
                   planFileName={planFileName}
                   introductionFileName={introductionFileName}
                   onPlanFile={(file) => void handlePlanFile(file)}

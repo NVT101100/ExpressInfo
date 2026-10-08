@@ -3,7 +3,6 @@ import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "../config";
 import { daysUntilDelivery, deliveryCountdownLabel, deliveryTone, formatDate, statusLabels } from "../lib/delivery";
 import { buildHtmlEmail, copyHtmlEmailToClipboard, formatPlainTextItems } from "../lib/email";
 import type {
-  DeliveryDateRequest,
   DeliveryItem,
   DeliveryRequest,
   MentionTarget,
@@ -28,8 +27,6 @@ interface RequestDetailProps {
   onDeliveryDate: (value: string) => void;
   onItemChange: (index: number, key: string, value: string) => void;
   onRemoveItem: (index: number) => void;
-  onRequestDeliveryDateChange: (itemIndex: number, requestedDate: string) => void;
-  onRespondToDeliveryDateChange: (proposalId: string, accept: boolean) => void;
   planFileName: string;
   introductionFileName: string;
   onPlanFile: (file?: File) => void;
@@ -55,8 +52,6 @@ export default function RequestDetail({
   onDeliveryDate,
   onItemChange,
   onRemoveItem,
-  onRequestDeliveryDateChange,
-  onRespondToDeliveryDateChange,
   planFileName,
   introductionFileName,
   onPlanFile,
@@ -76,8 +71,6 @@ export default function RequestDetail({
   );
   const [emailRowsPage, setEmailRowsPage] = useState(0);
   const [revisionPage, setRevisionPage] = useState(0);
-  const [proposalItemIndex, setProposalItemIndex] = useState("0");
-  const [proposalDate, setProposalDate] = useState("");
   const revisions = [...request.revisions].reverse();
   const visibleRevisions = revisions.slice(revisionPage * LIST_PAGE_SIZE, (revisionPage + 1) * LIST_PAGE_SIZE);
   const visibleEmailRowItems = items.slice(emailRowsPage * EMAIL_LIST_PAGE_SIZE, (emailRowsPage + 1) * EMAIL_LIST_PAGE_SIZE);
@@ -86,8 +79,6 @@ export default function RequestDetail({
     setReceiverEmail("");
     setEmailRowsPage(0);
     setRevisionPage(0);
-    setProposalItemIndex("0");
-    setProposalDate("");
   }, [request.id]);
 
   useEffect(() => {
@@ -245,75 +236,6 @@ export default function RequestDetail({
           </>
         )}
         <ItemsEditor items={items} onChange={onItemChange} onRemove={onRemoveItem} highlightTarget={highlightTarget} disabled={disabled} />
-        {request.deliveryDateRequests.length > 0 && (
-          <section className="delivery-date-proposals">
-            <div className="section-title">
-              <span className="step">03</span>
-              <div><h2>Yêu cầu thay đổi ngày giao</h2><p>Admin và nhà cung cấp có thể theo dõi trạng thái đề xuất tại đây.</p></div>
-            </div>
-            <div className="delivery-date-proposal-list">
-              {request.deliveryDateRequests.map((proposal: DeliveryDateRequest) => {
-                const currentItem = request.items[proposal.itemIndex];
-                const proposalStatus = proposal.status === "pending"
-                  ? "Đang chờ phản hồi"
-                  : proposal.status === "accepted" ? "Đã chấp nhận" : "Đã từ chối";
-                return (
-                  <article className="delivery-date-proposal" key={proposal.id}>
-                    <div className="delivery-date-proposal-copy">
-                      <strong>{proposal.itemName || currentItem?.name || `Mặt hàng ${proposal.itemIndex + 1}`}</strong>
-                      <span>{proposal.itemSku || currentItem?.sku ? `Mã: ${proposal.itemSku || currentItem?.sku} · ` : ""}Ngày hiện tại: {proposal.currentDate} → Đề xuất: {proposal.requestedDate}</span>
-                      <small className={`delivery-date-proposal-status ${proposal.status}`}>{proposalStatus}</small>
-                    </div>
-                    {!admin && !request.deleted && proposal.status === "pending" && (
-                      <div className="delivery-date-proposal-actions">
-                        <button type="button" className="button primary" disabled={saving} onClick={() => onRespondToDeliveryDateChange(proposal.id, true)}>Chấp nhận</button>
-                        <button type="button" className="button secondary" disabled={saving} onClick={() => onRespondToDeliveryDateChange(proposal.id, false)}>Từ chối</button>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-        )}
-        {admin && !request.deleted && (
-          <section className="delivery-date-proposals">
-            <div className="section-title">
-              <span className="step">04</span>
-              <div><h2>Yêu cầu đổi ngày cho mặt hàng</h2><p>Nhà cung cấp sẽ nhận thông báo và có thể chấp nhận hoặc từ chối.</p></div>
-            </div>
-            <div className="delivery-date-proposal-form">
-              <label className="field">
-                <span className="field-label">Mặt hàng</span>
-                <select className="text-input" value={proposalItemIndex} onChange={(event) => {
-                  setProposalItemIndex(event.target.value);
-                  setProposalDate("");
-                }}>
-                  {request.items.map((item, index) => (
-                    <option key={`${index}-${item.sku}`} value={index}>
-                      {`Dòng ${index + 1} · ${item.name || "Chưa có tên"}${item.sku ? ` · ${item.sku}` : ""}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="field">
-                <span className="field-label">Ngày giao đề xuất mới</span>
-                <input className="text-input" type="date" value={proposalDate} onChange={(event) => setProposalDate(event.target.value)} />
-              </label>
-              <button
-                type="button"
-                className="button primary"
-                disabled={saving || !proposalDate || !request.items[Number(proposalItemIndex)] || request.deliveryDateRequests.some((proposal) => proposal.itemIndex === Number(proposalItemIndex) && proposal.status === "pending")}
-                onClick={() => {
-                  onRequestDeliveryDateChange(Number(proposalItemIndex), proposalDate);
-                  setProposalDate("");
-                }}
-              >
-                Gửi yêu cầu
-              </button>
-            </div>
-          </section>
-        )}
         {admin && !request.deleted && (
           <section className="email-draft-panel" aria-label="Soạn email thông báo giao hàng">
             <div className="section-title">
