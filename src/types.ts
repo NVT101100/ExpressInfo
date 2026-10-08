@@ -59,8 +59,24 @@ export interface RevisionDocument {
 export interface DeliveryRequest extends RequestDocument {
   id: string;
   revisions: RevisionDocument[];
+  deliveryDateRequests: DeliveryDateRequest[];
   status: RequestStatus;
   deleted: boolean;
+}
+
+export interface DeliveryDateRequest {
+  id: string;
+  itemIndex: number;
+  itemName: string;
+  itemSku: string;
+  currentDate: string;
+  requestedDate: string;
+  status: "pending" | "accepted" | "rejected";
+  createdAt: number;
+  createdByUid: string;
+  createdByEmail: string;
+  responseAt?: number;
+  responseByUid?: string;
 }
 
 export interface NotificationDocument {
@@ -71,7 +87,7 @@ export interface NotificationDocument {
   supplierName?: string;
   recipientRole?: "admin" | "supplier";
   recipientUid?: string | null;
-  event?: "request_submitted" | "request_status" | "request_updated" | "delivery_reminder" | "delivery_overdue" | "delivery_confirmed";
+  event?: "request_submitted" | "request_status" | "request_updated" | "delivery_reminder" | "delivery_overdue" | "delivery_confirmed" | "delivery_date_requested" | "delivery_date_response";
   text: string;
   createdAt: number;
 }

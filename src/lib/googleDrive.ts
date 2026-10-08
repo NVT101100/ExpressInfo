@@ -12,6 +12,20 @@ const DRIVE_TOKEN_CACHE_MS = 59 * 60 * 1000;
 
 let cachedDriveToken: { uid: string; accessToken: string; expiresAt: number } | null = null;
 
+export function cacheDriveAccessToken(uid: string, accessToken: string) {
+  cachedDriveToken = {
+    uid,
+    accessToken,
+    expiresAt: Date.now() + DRIVE_TOKEN_CACHE_MS,
+  };
+}
+
+export function createGoogleDriveProvider() {
+  const provider = new GoogleAuthProvider();
+  provider.addScope(DRIVE_FILE_SCOPE);
+  return provider;
+}
+
 function mimeTypeForFile(file: File) {
   if (file.type) return file.type;
   const extension = file.name.split(".").pop()?.toLowerCase();
@@ -37,18 +51,13 @@ export async function getDriveAccessToken(user: User) {
   if (cachedDriveToken?.uid === user.uid && cachedDriveToken.expiresAt > Date.now()) {
     return cachedDriveToken.accessToken;
   }
-  const provider = new GoogleAuthProvider();
-  provider.addScope(DRIVE_FILE_SCOPE);
+  const provider = createGoogleDriveProvider();
   const result = await reauthenticateWithPopup(user, provider);
   const credential = GoogleAuthProvider.credentialFromResult(result);
   if (!credential?.accessToken) {
     throw new Error("Google không cấp quyền truy cập Drive. Hãy thử lại và chấp thuận quyền Drive.");
   }
-  cachedDriveToken = {
-    uid: user.uid,
-    accessToken: credential.accessToken,
-    expiresAt: Date.now() + DRIVE_TOKEN_CACHE_MS,
-  };
+  cacheDriveAccessToken(user.uid, credential.accessToken);
   return credential.accessToken;
 }
 

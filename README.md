@@ -24,7 +24,7 @@
 
    Khi deploy bằng GitHub Actions, thêm các repository secrets mà workflow sử dụng: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_DATABASE_URL` và `FIREBASE_TOKEN`. Các biến `VITE_*` được nhúng vào ứng dụng trong bước build; sau khi đổi secrets, cần chạy lại workflow để deploy bản build mới.
 
-Khi tải hồ sơ lần đầu, ứng dụng yêu cầu nhà cung cấp xác nhận lại tài khoản Google và cấp quyền `drive.file`; quyền này được dùng để tải trực tiếp lên thư mục Drive, không lưu access token vào Realtime Database.
+Khi đăng nhập Google, ứng dụng xin thêm quyền `drive.file` để tải hồ sơ trực tiếp lên thư mục Drive; access token chỉ được giữ tạm trong bộ nhớ phiên và không lưu vào Realtime Database. Nếu token hết hạn hoặc khôi phục phiên đăng nhập cũ chưa có scope Drive, ứng dụng có thể mở popup Google để xin lại quyền trước khi tải file.
 
 ## Cấu hình file Excel
 
@@ -40,6 +40,7 @@ Danh sách admin nhận chat được đọc từ các bản ghi `/roles/{uid}` 
 - Deep Admin và quyền đọc `/activityLogs` dành cho mọi tài khoản có `roles/{uid}/role == "developer"`.
 - Nhà cung cấp và admin đều sửa hồ sơ của chính tài khoản đang đăng nhập; email Google là định danh và không cho sửa trong ứng dụng.
 - Nhà cung cấp chỉ đọc phiếu của chính mình; admin đọc toàn bộ phiếu.
+- Admin có thể gửi đề nghị đổi ngày giao cho từng mặt hàng trong chi tiết phiếu. Nhà cung cấp nhận thông báo và có thể chấp nhận hoặc từ chối; khi chấp nhận, ngày của mặt hàng và ngày đầu tiên trên phiếu được cập nhật qua revision, còn phản hồi được giữ trong lịch sử đề nghị.
 - Tin nhắn nằm trong tab riêng, hiển thị danh sách hội thoại và 100 tin gần nhất; admin có thể bắt đầu hội thoại 1–1 với người dùng đã đăng ký, người dùng chọn admin. Không có hội thoại nhóm hoặc chat giữa hai người dùng/admin. Đề cập được chọn theo ngày → nhà cung cấp → phiếu → trường thông tin hoặc cả dòng hàng (không chọn từng ô); bấm đề cập sẽ mở đúng phiếu và tô sáng dữ liệu liên quan. Thanh bên hiển thị 10 thông báo mới nhất; tab Thông báo mở danh sách đầy đủ. Thông báo được lưu theo UID người nhận, nên mỗi tài khoản chỉ đọc/xóa thông báo trong hộp thư của mình; xóa chỉ ẩn thông báo cho chính tài khoản đó.
 - Phiếu gốc chỉ cho phép tạo, không cho cập nhật/xóa. Revision và tin nhắn là append-only; thông báo gốc được giữ lại, còn trạng thái đã đọc/đã ẩn được lưu riêng theo UID.
 - Revision chỉ lưu trường giao hàng, thay đổi ô hàng, thay danh sách hàng khi tải Excel mới/xóa dòng, hoặc sự kiện trạng thái; dữ liệu gốc không bị ghi đè. Nhà cung cấp có thể nạp Excel thay thế và xóa dòng khi sửa phiếu; email chỉ dành cho admin.

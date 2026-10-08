@@ -30,6 +30,24 @@
       ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (root.child('roles').child(auth.uid).child('role').val() == 'admin' || (query.orderByChild == 'ownerUid' && query.equalTo == auth.uid))",
       "$requestId": {
         ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && newData.child('ownerUid').val() == auth.uid",
+        "deliveryDateRequests": {
+          "$proposalId": {
+            ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && ((!data.exists() && root.child('roles').child(auth.uid).child('role').val() == 'admin' && newData.child('createdByUid').val() == auth.uid && root.child('requests').child($requestId).exists()) || (data.exists() && root.child('requests').child($requestId).child('ownerUid').val() == auth.uid && data.child('status').val() == 'pending' && (newData.child('status').val() == 'accepted' || newData.child('status').val() == 'rejected') && newData.child('responseByUid').val() == auth.uid))",
+            ".validate": "newData.hasChildren(['itemIndex', 'itemName', 'itemSku', 'currentDate', 'requestedDate', 'status', 'createdAt', 'createdByUid', 'createdByEmail']) && newData.child('itemIndex').isNumber() && newData.child('itemIndex').val() >= 0 && newData.child('itemIndex').val() <= 499 && newData.child('itemName').isString() && newData.child('itemName').val().length <= 240 && newData.child('itemSku').isString() && newData.child('itemSku').val().length <= 120 && newData.child('currentDate').isString() && newData.child('currentDate').val().matches(/^\\d{4}-\\d{2}-\\d{2}$/) && newData.child('requestedDate').isString() && newData.child('requestedDate').val().matches(/^\\d{4}-\\d{2}-\\d{2}$/) && newData.child('status').val().matches(/^(pending|accepted|rejected)$/) && newData.child('createdAt').isNumber() && newData.child('createdByUid').isString() && newData.child('createdByEmail').isString() && (!newData.hasChild('responseAt') || newData.child('responseAt').isNumber()) && (!newData.hasChild('responseByUid') || newData.child('responseByUid').isString())",
+            "itemIndex": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "itemName": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "itemSku": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "currentDate": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "requestedDate": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "status": { ".validate": "(!data.exists() && newData.val() == 'pending') || (data.val() == 'pending' && (newData.val() == 'accepted' || newData.val() == 'rejected'))" },
+            "createdAt": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "createdByUid": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "createdByEmail": { ".validate": "!data.exists() || newData.val() == data.val()" },
+            "responseAt": { ".validate": "root.child('requests').child($requestId).child('ownerUid').val() == auth.uid && newData.isNumber()" },
+            "responseByUid": { ".validate": "root.child('requests').child($requestId).child('ownerUid').val() == auth.uid && newData.val() == auth.uid" },
+            "$other": { ".validate": false }
+          }
+        },
         "revisions": {
           "$revisionId": {
             ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && (root.child('roles').child(auth.uid).child('role').val() == 'admin' || root.child('requests').child($requestId).child('ownerUid').val() == auth.uid) && newData.child('actorUid').val() == auth.uid && newData.child('actorEmail').val() == auth.token.email",
@@ -145,7 +163,7 @@
             "senderUid": { ".validate": "newData.val() == auth.uid" },
             "recipientRole": { ".validate": "newData.val() == 'supplier' || newData.val() == 'admin'" },
             "recipientUid": { ".validate": "newData.val() == $uid" },
-            "event": { ".validate": "newData.val().matches(/^(request_submitted|request_status|request_updated|delivery_reminder|delivery_overdue|delivery_confirmed)$/)" },
+            "event": { ".validate": "newData.val().matches(/^(request_submitted|request_status|request_updated|delivery_reminder|delivery_overdue|delivery_confirmed|delivery_date_requested|delivery_date_response)$/)" },
             "supplierName": { ".validate": "newData.isString() && newData.val().length <= 160" },
             "senderName": { ".validate": "newData.isString() && newData.val().length <= 160" },
             "text": { ".validate": "newData.isString() && newData.val().length <= 500" },

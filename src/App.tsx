@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import {
   GoogleAuthProvider,
+  type UserCredential,
   onAuthStateChanged,
   signInWithPopup,
   signOut,
@@ -13,6 +14,7 @@ import {
   ref,
   serverTimestamp,
   set,
+  update,
 } from "firebase/database";
 import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "./config";
 import AdminPage from "./components/AdminPage";
@@ -36,7 +38,12 @@ import {
   statusLabels,
 } from "./lib/delivery";
 import { logActivity } from "./lib/activity";
-import { getDriveAccessToken, uploadToDeliveryDrive } from "./lib/googleDrive";
+import {
+  cacheDriveAccessToken,
+  createGoogleDriveProvider,
+  getDriveAccessToken,
+  uploadToDeliveryDrive,
+} from "./lib/googleDrive";
 import type {
   ActivityAction,
   DeliveryItem,
@@ -351,7 +358,8 @@ function App() {
     if (!auth) return;
     setError("");
     try {
-      const result = await signInWithPopup(auth, new GoogleAuthProvider());
+      const result = await signInWithPopup(auth, createGoogleDriveProvider());
+      cacheDriveTokenFromCredential(result);
       try {
         await logActivity(result.user, "signed_in", "Đăng nhập vào cổng giao hàng.");
       } catch (cause) {
@@ -360,6 +368,13 @@ function App() {
 
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Đăng nhập thất bại.");
+    }
+  }
+
+  function cacheDriveTokenFromCredential(result: UserCredential) {
+    const credential = GoogleAuthProvider.credentialFromResult(result);
+    if (credential?.accessToken) {
+      cacheDriveAccessToken(result.user.uid, credential.accessToken);
     }
   }
 
@@ -409,7 +424,7 @@ function App() {
     requestId: string,
     text: string,
     details: {
-      event?: "request_submitted" | "request_status" | "request_updated" | "delivery_reminder" | "delivery_overdue" | "delivery_confirmed";
+      event?: "request_submitted" | "request_status" | "request_updated" | "delivery_reminder" | "delivery_overdue" | "delivery_confirmed" | "delivery_date_requested" | "delivery_date_response";
       supplierName: string;
       senderName: string;
     },
@@ -596,6 +611,139 @@ function App() {
     };
     const revisionRef = push(ref(db, `requests/${request.id}/revisions`));
     await set(revisionRef, revision);
+  }
+
+  async function handleRequestDeliveryDateChange(
+    itemIndex: number,
+    requestedDate: string,
+    requestId = selected?.id,
+  ) {
+    const targetRequest = requests.find((request) => request.id === requestId);
+    if (!db || !user || !admin || !targetRequest || targetRequest.deleted) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+      setError("Hãy chọn ngày giao mới hợp lệ.");
+      return;
+    }
+    const item = targetRequest.items[itemIndex];
+    if (!item) {
+      setError("Không tìm thấy mặt hàng cần đổi ngày giao.");
+      return;
+    }
+    if (requestedDate === item.expectedDeliveryDate) {
+      setError("Ngày đề xuất phải khác ngày giao hiện tại của mặt hàng.");
+      return;
+    }
+    if (targetRequest.deliveryDateRequests.some((proposal) => proposal.itemIndex === itemIndex && proposal.status === "pending")) {
+      setError("Mặt hàng này đã có yêu cầu đang chờ nhà cung cấp phản hồi.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const proposalRef = push(ref(db, `requests/${targetRequest.id}/deliveryDateRequests`));
+      if (!proposalRef.key) throw new Error("Không tạo được mã yêu cầu đổi ngày.");
+      await set(proposalRef, {
+        itemIndex,
+        itemName: item.name ?? "",
+        itemSku: item.sku ?? "",
+        currentDate: item.expectedDeliveryDate ?? "",
+        requestedDate,
+        status: "pending",
+        createdAt: serverTimestamp(),
+        createdByUid: user.uid,
+        createdByEmail: user.email ?? "",
+      });
+      await notify(
+        targetRequest.id,
+        `${targetRequest.supplierName} · Admin đề nghị đổi ngày giao mặt hàng "${item.name || `dòng ${itemIndex + 1}`}" từ ${item.expectedDeliveryDate} sang ${requestedDate}.`,
+        {
+          event: "delivery_date_requested",
+          supplierName: targetRequest.supplierName,
+          senderName: profile.displayName || user.displayName || user.email || "Quản trị viên",
+        },
+        { recipientRole: "supplier", recipientUid: targetRequest.ownerUid },
+      );
+      setNotice("Đã gửi yêu cầu thay đổi ngày giao cho nhà cung cấp.");
+    } catch (cause) {
+      setError(`Không gửi được yêu cầu thay đổi ngày giao: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleRespondToDeliveryDateChange(
+    proposalId: string,
+    accept: boolean,
+    requestId = selected?.id,
+  ) {
+    const targetRequest = requests.find((request) => request.id === requestId);
+    const proposal = targetRequest?.deliveryDateRequests.find((entry) => entry.id === proposalId);
+    if (!db || !user || !targetRequest || targetRequest.deleted || targetRequest.ownerUid !== user.uid || !proposal) return;
+    if (proposal.status !== "pending") {
+      setError("Yêu cầu này đã được phản hồi trước đó.");
+      return;
+    }
+    const item = targetRequest.items[proposal.itemIndex];
+    if (accept && (!item || item.expectedDeliveryDate !== proposal.currentDate)) {
+      setError("Mặt hàng hoặc ngày giao đã thay đổi sau khi admin gửi yêu cầu. Vui lòng liên hệ admin để gửi yêu cầu mới.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const updates: Record<string, unknown> = {
+        [`requests/${targetRequest.id}/deliveryDateRequests/${proposalId}/status`]: accept ? "accepted" : "rejected",
+        [`requests/${targetRequest.id}/deliveryDateRequests/${proposalId}/responseAt`]: serverTimestamp(),
+        [`requests/${targetRequest.id}/deliveryDateRequests/${proposalId}/responseByUid`]: user.uid,
+      };
+      if (accept) {
+        const revisionRef = push(ref(db, `requests/${targetRequest.id}/revisions`));
+        if (!revisionRef.key) throw new Error("Không tạo được lịch sử cập nhật ngày giao.");
+        const nextItems = targetRequest.items.map((entry, index) =>
+          index === proposal.itemIndex
+            ? { ...entry, expectedDeliveryDate: proposal.requestedDate }
+            : entry,
+        );
+        const nextDeliveryDate = nextItems
+          .map((entry) => entry.expectedDeliveryDate)
+          .filter((date): date is string => /^\d{4}-\d{2}-\d{2}$/.test(date ?? ""))
+          .sort()[0];
+        updates[`requests/${targetRequest.id}/revisions/${revisionRef.key}`] = {
+          actorUid: user.uid,
+          actorEmail: user.email ?? "",
+          createdAt: serverTimestamp(),
+          changes: {
+            ...(nextDeliveryDate && nextDeliveryDate !== targetRequest.deliveryDate
+              ? { deliveryDate: nextDeliveryDate }
+              : {}),
+            itemChanges: [{
+              index: proposal.itemIndex,
+              key: "expectedDeliveryDate",
+              value: proposal.requestedDate,
+            }],
+          },
+        };
+      }
+      await update(ref(db), updates);
+      const responseText = accept
+        ? `Nhà cung cấp đã chấp nhận đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}" sang ${proposal.requestedDate}.`
+        : `Nhà cung cấp đã từ chối đề nghị đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}".`;
+      await notify(
+        targetRequest.id,
+        `${targetRequest.supplierName} · ${responseText}`,
+        {
+          event: "delivery_date_response",
+          supplierName: targetRequest.supplierName,
+          senderName: profile.displayName || user.displayName || user.email || "Nhà cung cấp",
+        },
+        { recipientRole: "admin" },
+      );
+      setNotice(accept ? "Đã chấp nhận yêu cầu; ngày giao mặt hàng được cập nhật." : "Đã từ chối yêu cầu thay đổi ngày giao.");
+    } catch (cause) {
+      setError(`Không lưu được phản hồi thay đổi ngày giao: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function handleSaveEdit() {
@@ -1023,6 +1171,8 @@ function App() {
                 onDeliveryDate={setDeliveryDate}
                 onItemChange={updateItem}
                 onRemoveItem={removeItem}
+                onRequestDeliveryDateChange={(itemIndex, requestedDate) => void handleRequestDeliveryDateChange(itemIndex, requestedDate)}
+                onRespondToDeliveryDateChange={(proposalId, accept) => void handleRespondToDeliveryDateChange(proposalId, accept)}
                 planFileName={planFileName}
                 introductionFileName={introductionFileName}
                 onPlanFile={(file) => void handlePlanFile(file)}
@@ -1051,6 +1201,8 @@ function App() {
                   onDeliveryDate={setDeliveryDate}
                   onItemChange={updateItem}
                   onRemoveItem={removeItem}
+                  onRequestDeliveryDateChange={(itemIndex, requestedDate) => void handleRequestDeliveryDateChange(itemIndex, requestedDate)}
+                  onRespondToDeliveryDateChange={(proposalId, accept) => void handleRespondToDeliveryDateChange(proposalId, accept)}
                   planFileName={planFileName}
                   introductionFileName={introductionFileName}
                   onPlanFile={(file) => void handlePlanFile(file)}

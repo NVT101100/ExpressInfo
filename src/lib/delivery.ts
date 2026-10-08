@@ -1,6 +1,7 @@
 import { EXCEL_TEMPLATE } from "../config";
 import type {
   DeliveryItem,
+  DeliveryDateRequest,
   DeliveryRequest,
   RequestDocument,
   RequestStatus,
@@ -121,11 +122,15 @@ export function requestFromSnapshot(
 ): DeliveryRequest {
   const original = value as unknown as RequestDocument & {
     revisions?: Record<string, Omit<RevisionDocument, "id">>;
+    deliveryDateRequests?: Record<string, Omit<DeliveryDateRequest, "id">>;
   };
   const legacyDelivery = original.deliveryAt?.split("T") ?? ["", ""];
   const revisions = Object.entries(original.revisions ?? {})
     .map(([revisionId, revision]) => ({ ...revision, id: revisionId }))
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+  const deliveryDateRequests = Object.entries(original.deliveryDateRequests ?? {})
+    .map(([proposalId, proposal]) => ({ ...proposal, id: proposalId }))
+    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
   const effective: DeliveryRequest = {
     ...original,
     supplierName: original.supplierName || original.ownerName,
@@ -133,6 +138,7 @@ export function requestFromSnapshot(
     deliveryDate: original.deliveryDate || legacyDelivery[0] || "",
     id,
     revisions,
+    deliveryDateRequests,
     status: "pending",
     deleted: false,
   };

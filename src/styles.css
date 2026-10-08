@@ -327,6 +327,19 @@ td strong { color: #29392f; font-size: 11px; }
 .detail-heading { align-items: center; }
 .detail-heading .status { margin-bottom: 5px; }
 .detail-items-title { margin-top: 27px; }
+.delivery-date-proposals { margin-top: 22px; padding: 18px; border: 1px solid #e2ebe5; border-radius: 11px; background: #fbfdfb; }
+.delivery-date-proposals .section-title { margin-bottom: 14px; }
+.delivery-date-proposal-list { display: grid; gap: 9px; }
+.delivery-date-proposal { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 12px 13px; border: 1px solid #e8eeea; border-radius: 9px; background: #fff; }
+.delivery-date-proposal-copy { display: grid; gap: 5px; min-width: 0; }
+.delivery-date-proposal-copy strong { font-size: 12px; color: #35483b; }
+.delivery-date-proposal-copy span { color: #65736b; font-size: 11px; line-height: 1.5; }
+.delivery-date-proposal-copy small { width: fit-content; padding: 3px 7px; border-radius: 10px; color: #886622; background: #fff5df; font-size: 10px; }
+.delivery-date-proposal-copy small.accepted { color: #19704a; background: #e6f5ec; }
+.delivery-date-proposal-copy small.rejected { color: #a13b36; background: #fff0ee; }
+.delivery-date-proposal-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+.delivery-date-proposal-form { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(180px, 1fr) auto; gap: 11px; align-items: end; }
+.delivery-date-proposal-form .button { min-height: 39px; white-space: nowrap; }
 .detail-actions { display: flex; align-items: center; gap: 9px; border-top: 1px solid var(--line); margin-top: 19px; padding-top: 17px; }
 .status-select { width: 145px; }
 .history-panel { margin-top: 16px; }
@@ -460,6 +473,8 @@ td strong { color: #29392f; font-size: 11px; }
   .upcoming-mail-request { align-items: flex-start; }
   .messages-layout { grid-template-columns: minmax(0, 1fr); }
   .conversation-list { min-height: 0; max-height: 245px; }
+  .delivery-date-proposal-form { grid-template-columns: minmax(0, 1fr); }
+  .delivery-date-proposal { align-items: flex-start; flex-direction: column; }
   .chat-window { min-height: 58vh; max-height: 72vh; }
   .notification-list .notification-item { padding: 11px; }
 }
