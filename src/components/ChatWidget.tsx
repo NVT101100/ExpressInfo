@@ -563,11 +563,21 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                           : message.senderName || contactName}
                     </strong>
                     <span>{formatDate(message.createdAt)}</span>
+                    {message.senderUid === user.uid && (
+                      <button
+                        type="button"
+                        className="message-delete-icon"
+                        aria-label="Xóa tin nhắn"
+                        title="Xóa tin nhắn"
+                        onClick={() => void deleteMessage(message.id)}
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3" />
+                        </svg>
+                      </button>
+                    )}
                   </div>
                   <p>{message.text}</p>
-                  {message.senderUid === user.uid && (
-                    <button className="message-delete" onClick={() => void deleteMessage(message.id)}>Xóa tin nhắn</button>
-                  )}
                   {mention && (
                     <button
                       className="message-mention"

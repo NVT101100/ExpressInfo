@@ -119,13 +119,13 @@ export function usePortalData(
   useEffect(() => {
     setNotificationsLoaded(false);
     setReadNotificationIds(new Set());
+    setDeletedNotificationIds(new Set());
     if (!user || !db) {
       setNotifications([]);
       return;
     }
-    const notificationPath = admin
-      ? "notifications/admin"
-      : `notifications/users/${user.uid}`;
+    setNotifications([]);
+    const notificationPath = `notifications/users/${user.uid}`;
     return onValue(
       ref(db, notificationPath),
       (snapshot) => {
@@ -137,7 +137,7 @@ export function usePortalData(
       },
       (cause) => reportError(`Không tải được thông báo: ${cause.message}`),
     );
-  }, [user, admin, reportError]);
+  }, [user, reportError]);
 
   useEffect(() => {
     if (!user || !db) {

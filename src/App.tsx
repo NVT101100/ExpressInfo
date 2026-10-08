@@ -50,11 +50,50 @@ import type {
 
 type Page = "supplier" | "admin" | "deepAdmin" | "profile" | "messages" | "notifications";
 
+function NotificationActions({
+  open,
+  onToggle,
+  onDelete,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="notification-actions">
+      <button
+        type="button"
+        className="notification-more-button"
+        aria-label="Tùy chọn thông báo"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="5" cy="12" r="1.7" />
+          <circle cx="12" cy="12" r="1.7" />
+          <circle cx="19" cy="12" r="1.7" />
+        </svg>
+      </button>
+      {open && (
+        <div className="notification-action-menu">
+          <button type="button" onClick={onDelete}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3" />
+            </svg>
+            Xóa thông báo
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState<Page>("supplier");
   const [notificationPage, setNotificationPage] = useState(0);
+  const [openNotificationMenuId, setOpenNotificationMenuId] = useState<string | null>(null);
   const [supplierRequestPage, setSupplierRequestPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [supplierName, setSupplierName] = useState("");
@@ -112,19 +151,23 @@ function App() {
     if (!db || !user || deletedNotificationIds.has(notificationId)) return;
     try {
       await set(ref(db, `notifications/deleted/${user.uid}/${notificationId}`), serverTimestamp());
+      setOpenNotificationMenuId(null);
     } catch (cause) {
       setError(`Không thể xóa thông báo: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
     }
   }
 
   useEffect(() => {
-    if (!error && !notice) return;
-    const timeout = window.setTimeout(() => {
-      setError("");
-      setNotice("");
-    }, 60_000);
+    if (!error) return;
+    const timeout = window.setTimeout(() => setError(""), 60_000);
     return () => window.clearTimeout(timeout);
-  }, [error, notice]);
+  }, [error]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(""), 60_000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
   useEffect(() => {
     setNotificationPage(0);
@@ -375,19 +418,36 @@ function App() {
       recipientUid: string;
     },
   ) {
-    if (!db || !user) throw new Error("Firebase chưa sẵn sàng.");
-    const notificationPath = recipient.recipientRole === "admin"
-      ? "notifications/admin"
-      : `notifications/users/${recipient.recipientUid}`;
-    const notificationRef = push(ref(db, notificationPath));
-    await set(notificationRef, {
-      requestId,
-      senderUid: user.uid,
-      ...details,
-      ...recipient,
-      text,
-      createdAt: serverTimestamp(),
-    });
+    const database = db;
+    if (!database || !user) throw new Error("Firebase chưa sẵn sàng.");
+    let recipientUids: string[];
+    if (recipient.recipientRole === "admin") {
+      recipientUids = adminRecipients.map((adminRecipient) => adminRecipient.uid);
+      if (recipientUids.length === 0) {
+        const rolesSnapshot = await get(ref(database, "roles"));
+        const roles = rolesSnapshot.val();
+        recipientUids = roles && typeof roles === "object"
+          ? Object.entries(roles).flatMap(([uid, record]) =>
+              record && typeof record === "object" && "role" in record && record.role === "admin" ? [uid] : [],
+            )
+          : [];
+      }
+    } else {
+      recipientUids = [recipient.recipientUid];
+    }
+    if (recipientUids.length === 0) throw new Error("Chưa có người nhận thông báo.");
+    await Promise.all(recipientUids.map((recipientUid) => {
+      const notificationRef = push(ref(database, `notifications/users/${recipientUid}`));
+      return set(notificationRef, {
+        requestId,
+        senderUid: user.uid,
+        ...details,
+        recipientRole: recipient.recipientRole,
+        recipientUid,
+        text,
+        createdAt: serverTimestamp(),
+      });
+    }));
   }
 
   async function recordActivity(
@@ -851,16 +911,22 @@ function App() {
                 <button className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`} onClick={() => { void markNotificationRead(notification.id); setPage(admin ? "admin" : "supplier"); openRequest(notification.requestId); }}>
                   {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}<span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
                 </button>
-                <button className="notification-delete" aria-label="Xóa thông báo" title="Xóa thông báo" onClick={() => void deleteNotification(notification.id)}>×</button>
+                <NotificationActions
+                  open={openNotificationMenuId === notification.id}
+                  onToggle={() => setOpenNotificationMenuId((openId) => openId === notification.id ? null : notification.id)}
+                  onDelete={() => void deleteNotification(notification.id)}
+                />
               </div>
             ))}
             {visibleNotifications.length > 10 && <button className="sidebar-link notification-more" onClick={() => openPage("notifications")}>Xem tất cả thông báo ({visibleNotifications.length})</button>}
           </div>
           <div className="sidebar-foot">Đăng nhập an toàn với Google</div>
         </aside>
+        <div className="toast-stack" aria-live="polite">
+          {error && <div key={`error-${error}`} className="alert error toast" role="alert"><span>{error}</span><button aria-label="Đóng thông báo lỗi" onClick={() => setError("")}>×</button><span className="toast-progress" aria-hidden="true" /></div>}
+          {notice && <div key={`notice-${notice}`} className="alert success toast" role="status"><span>{notice}</span><button aria-label="Đóng thông báo" onClick={() => setNotice("")}>×</button><span className="toast-progress" aria-hidden="true" /></div>}
+        </div>
         <main className={`main-content ${admin && page === "admin" ? "admin-main-content" : ""}`}>
-          {error && <div className="alert error"><span>{error}</span><button onClick={() => setError("")}>×</button></div>}
-          {notice && <div className="alert success"><span>{notice}</span><button onClick={() => setNotice("")}>×</button></div>}
 
           <ChatWidget
             user={user}
@@ -899,7 +965,11 @@ function App() {
                       {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}
                       <span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
                     </button>
-                    <button className="button danger notification-delete-page" onClick={() => void deleteNotification(notification.id)}>Xóa</button>
+                    <NotificationActions
+                      open={openNotificationMenuId === notification.id}
+                      onToggle={() => setOpenNotificationMenuId((openId) => openId === notification.id ? null : notification.id)}
+                      onDelete={() => void deleteNotification(notification.id)}
+                    />
                   </div>
                 ))}
               </div>

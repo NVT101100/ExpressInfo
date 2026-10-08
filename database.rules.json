@@ -117,22 +117,6 @@
       }
     },
     "notifications": {
-      "admin": {
-        ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && root.child('roles').child(auth.uid).child('role').val() == 'admin'",
-        "$notificationId": {
-          ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && newData.child('senderUid').val() == auth.uid && newData.child('recipientRole').val() == 'admin' && ((root.child('roles').child(auth.uid).child('role').val() == 'admin' && newData.child('event').val() == 'delivery_confirmed') || (root.child('roles').child(auth.uid).child('role').val() != 'admin' && root.child('requests').child(newData.child('requestId').val()).child('ownerUid').val() == auth.uid))",
-          ".validate": "newData.hasChildren(['requestId', 'senderUid', 'recipientRole', 'text', 'createdAt']) && newData.child('createdAt').isNumber()",
-          "requestId": { ".validate": "newData.isString()" },
-          "senderUid": { ".validate": "newData.val() == auth.uid" },
-          "recipientRole": { ".validate": "newData.val() == 'admin'" },
-          "event": { ".validate": "newData.val().matches(/^(request_submitted|request_status|request_updated|delivery_reminder|delivery_overdue|delivery_confirmed)$/)" },
-          "supplierName": { ".validate": "newData.isString() && newData.val().length <= 160" },
-          "senderName": { ".validate": "newData.isString() && newData.val().length <= 160" },
-          "text": { ".validate": "newData.isString() && newData.val().length <= 500" },
-          "createdAt": { ".validate": "newData.isNumber()" },
-          "$other": { ".validate": false }
-        }
-      },
       "notificationReads": {
         "$uid": {
           ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid",
@@ -153,13 +137,13 @@
       },
       "users": {
         "$uid": {
-          ".read": "auth != null && auth.uid == $uid",
+          ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && auth.uid == $uid",
           "$notificationId": {
-            ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && root.child('roles').child(auth.uid).child('role').val() == 'admin' && newData.child('recipientUid').val() == $uid && newData.child('recipientRole').val() == 'supplier' && root.child('requests').child(newData.child('requestId').val()).child('ownerUid').val() == $uid",
+            ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !data.exists() && newData.child('recipientUid').val() == $uid && ((newData.child('recipientRole').val() == 'supplier' && root.child('roles').child(auth.uid).child('role').val() == 'admin' && root.child('requests').child(newData.child('requestId').val()).child('ownerUid').val() == $uid) || (newData.child('recipientRole').val() == 'admin' && root.child('roles').child($uid).child('role').val() == 'admin' && root.child('requests').child(newData.child('requestId').val()).child('ownerUid').val() == auth.uid && root.child('roles').child(auth.uid).child('role').val() != 'admin'))",
             ".validate": "newData.hasChildren(['requestId', 'senderUid', 'recipientRole', 'recipientUid', 'text', 'createdAt']) && newData.child('createdAt').isNumber()",
             "requestId": { ".validate": "newData.isString()" },
             "senderUid": { ".validate": "newData.val() == auth.uid" },
-            "recipientRole": { ".validate": "newData.val() == 'supplier'" },
+            "recipientRole": { ".validate": "newData.val() == 'supplier' || newData.val() == 'admin'" },
             "recipientUid": { ".validate": "newData.val() == $uid" },
             "event": { ".validate": "newData.val().matches(/^(request_submitted|request_status|request_updated|delivery_reminder|delivery_overdue|delivery_confirmed)$/)" },
             "supplierName": { ".validate": "newData.isString() && newData.val().length <= 160" },
