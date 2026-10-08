@@ -28,7 +28,7 @@ Khi tải hồ sơ lần đầu, ứng dụng yêu cầu nhà cung cấp xác nh
 
 ## Cấu hình file Excel
 
-`EXCEL_TEMPLATE` trong `src/config.ts` hiện dùng các cột: **STT, Nhân sự phụ trách, Địa điểm giao hàng, Số PO, Tên vật tư, Số lượng giao, Ngày giao dự kiến, Ghi chú**. Cột ghi chú này thuộc từng dòng Excel và vẫn được giữ; ghi chú chung cũ trên phiếu đã bỏ. `sheetIndex` là sheet bắt đầu từ 0; `headerRow` là dòng tiêu đề bắt đầu từ 1. Ngày dự kiến được chuẩn hóa thành `YYYY-MM-DD` (hỗ trợ ngày Excel, `dd/mm/yyyy` và `yyyy-mm-dd`). Các dòng trống được bỏ qua; giới hạn mặc định là 500 dòng.
+`EXCEL_TEMPLATE` trong `src/config.ts` hiện dùng các cột: **STT, Nhân sự phụ trách, Địa điểm giao hàng, Số PO, Tên vật tư, Số lượng giao, Đơn vị tính, Ngày giao dự kiến, Ghi chú**. Cột ghi chú này thuộc từng dòng Excel và vẫn được giữ; ghi chú chung cũ trên phiếu đã bỏ. `sheetIndex` là sheet bắt đầu từ 0; `headerRow` là dòng tiêu đề bắt đầu từ 1. Ngày dự kiến được chuẩn hóa thành `YYYY-MM-DD` (hỗ trợ ngày Excel, timestamp dạng giây/mili giây, `dd/mm/yyyy` và `yyyy-mm-dd`; chuỗi có dấu gạch chéo được hiểu theo thứ tự ngày/tháng/năm). Cột **Đơn vị tính** được để trống khi đọc file mẫu cũ chưa có cột này. Các dòng trống được bỏ qua; giới hạn mặc định là 500 dòng.
 
 ## Cấu hình admin nhận form
 

@@ -63,6 +63,58 @@ function isValidIsoDate(value: string) {
     && date.getUTCDate() === Number(dayText);
 }
 
+function isoDateFromDate(date: Date) {
+  if (Number.isNaN(date.getTime())) return "";
+  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  if (Number.isNaN(localDate.getTime())) return "";
+  return localDate.toISOString().slice(0, 10);
+}
+
+function isoDateFromExcelSerial(serial: number) {
+  const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86_400_000);
+  if (Number.isNaN(date.getTime())) return "";
+  const isoDate = date.toISOString().slice(0, 10);
+  return isValidIsoDate(isoDate) ? isoDate : "";
+}
+
+function normalizeDeliveryDate(value: unknown, displayValue: string) {
+  if (value instanceof Date) return isoDateFromDate(value);
+  if (typeof value === "number" && Number.isFinite(value)) {
+    if (Number.isInteger(value) && value >= 10_000_000 && value <= 99_999_999) {
+      const compactDate = String(value);
+      const isoDate = `${compactDate.slice(0, 4)}-${compactDate.slice(4, 6)}-${compactDate.slice(6, 8)}`;
+      return isValidIsoDate(isoDate) ? isoDate : "";
+    }
+    if (value >= 100_000_000_000) return isoDateFromDate(new Date(value));
+    if (value >= 1_000_000_000) return isoDateFromDate(new Date(value * 1_000));
+    return isoDateFromExcelSerial(value);
+  }
+
+  const raw = displayValue.trim();
+  const compactDate = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (compactDate) {
+    const isoDate = `${compactDate[1]}-${compactDate[2]}-${compactDate[3]}`;
+    return isValidIsoDate(isoDate) ? isoDate : "";
+  }
+  const isoDate = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
+  if (isoDate) {
+    const normalized = `${isoDate[1]}-${isoDate[2].padStart(2, "0")}-${isoDate[3].padStart(2, "0")}`;
+    return isValidIsoDate(normalized) ? normalized : "";
+  }
+  const dayFirstDate = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
+  if (dayFirstDate) {
+    const normalized = `${dayFirstDate[3]}-${dayFirstDate[2].padStart(2, "0")}-${dayFirstDate[1].padStart(2, "0")}`;
+    return isValidIsoDate(normalized) ? normalized : "";
+  }
+  if (/^\d+$/.test(raw)) {
+    const numericValue = Number(raw);
+    if (Number.isSafeInteger(numericValue)) {
+      return normalizeDeliveryDate(numericValue, "");
+    }
+  }
+  return "";
+}
+
 export function requestFromSnapshot(
   id: string,
   value: Record<string, unknown>,
@@ -146,7 +198,7 @@ export async function parseSpreadsheet(file: File): Promise<DeliveryItem[]> {
     ),
   );
   const missing = EXCEL_TEMPLATE.columns.filter(
-    (_, index) => columnIndexes[index] < 0,
+    (column, index) => column.key !== "unit" && columnIndexes[index] < 0,
   );
   if (missing.length) {
     throw new Error(
@@ -159,22 +211,11 @@ export async function parseSpreadsheet(file: File): Promise<DeliveryItem[]> {
     if (rowNumber <= headerIndex + 1) return;
     const item = Object.fromEntries(
       EXCEL_TEMPLATE.columns.map((column, index) => {
+        if (columnIndexes[index] < 0) return [column.key, ""];
         const cell = row.getCell(columnIndexes[index] + 1);
         const value = cell.value;
         if (column.key === "expectedDeliveryDate") {
-          if (value instanceof Date && !Number.isNaN(value.getTime())) {
-            const localDate = new Date(value.getTime() - value.getTimezoneOffset() * 60_000);
-            return [column.key, localDate.toISOString().slice(0, 10)];
-          }
-          if (typeof value === "number" && Number.isFinite(value)) {
-            const excelDate = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86_400_000);
-            return [column.key, excelDate.toISOString().slice(0, 10)];
-          }
-          const raw = cell.text.trim();
-          const isoDate = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-          if (isoDate) return [column.key, `${isoDate[1]}-${isoDate[2].padStart(2, "0")}-${isoDate[3].padStart(2, "0")}`];
-          const localDate = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-          if (localDate) return [column.key, `${localDate[3]}-${localDate[2].padStart(2, "0")}-${localDate[1].padStart(2, "0")}`];
+          return [column.key, normalizeDeliveryDate(value, cell.text)];
         }
         return [column.key, cell.text.trim()];
       }),

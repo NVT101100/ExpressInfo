@@ -316,21 +316,10 @@ export default function AdminPage({
       <div className="page-heading admin-heading">
         <div><p className="eyebrow">QUẢN TRỊ</p><h1>Tổng hợp đăng ký</h1><p className="muted">Lọc phiếu theo tiêu chí, duyệt và xuất dữ liệu.</p></div>
         <div className="export-actions">
-          <button
-            className="button secondary"
-            disabled={loading || seedingDemo || hasDemoRequests}
-            title={hasDemoRequests ? "Đã có phiếu demo trong cơ sở dữ liệu." : "Tạo 5 phiếu mẫu trong Realtime Database."}
-            onClick={onSeedDemo}
-          >
-            {seedingDemo ? "Đang tạo phiếu mẫu…" : hasDemoRequests ? "Đã có phiếu mẫu" : "+ Thêm 5 phiếu mẫu"}
-          </button>
           <button className="button secondary" onClick={() => onExport(filteredRequests, "filtered")}>↓ Xuất kết quả lọc ({filteredRequests.length})</button>
           <button className="button secondary" onClick={() => onExport(activeRequests, "all")}>↓ Xuất tất cả ({activeRequests.length})</button>
         </div>
       </div>
-      {!hasDemoRequests && (
-        <p className="demo-data-note">Phiếu mẫu được đánh dấu <strong>[DEMO]</strong>, chỉ dùng thử giao diện và có thể xóa mềm như phiếu thường.</p>
-      )}
       {tomorrowRequests.length > 0 && (
         <section className="upcoming-mail-reminder" aria-label="Nhắc soạn email giao hàng">
           <div className="upcoming-mail-copy">

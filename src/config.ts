@@ -12,6 +12,7 @@ export const EXCEL_TEMPLATE = {
     { key: "poNumber", label: "Số PO" },
     { key: "materialName", label: "Tên vật tư" },
     { key: "deliveryQuantity", label: "Số lượng giao" },
+    { key: "unit", label: "Đơn vị tính" },
     { key: "expectedDeliveryDate", label: "Ngày giao dự kiến" },
     { key: "notes", label: "Ghi chú" },
   ],
