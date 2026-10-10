@@ -14,7 +14,6 @@ import {
   ref,
   serverTimestamp,
   set,
-  update,
 } from "firebase/database";
 import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "./config";
 import AdminPage from "./components/AdminPage";
@@ -31,7 +30,6 @@ import {
   downloadDeliveryTemplate,
   formatDate,
   parseSpreadsheet,
-  requestFromSnapshot,
   statusLabels,
 } from "./lib/delivery";
 import { logActivity } from "./lib/activity";
@@ -104,7 +102,6 @@ function App() {
   const [supplierRequestPage, setSupplierRequestPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [supplierName, setSupplierName] = useState("");
-  const [deliveryDate, setDeliveryDate] = useState("");
   const [items, setItems] = useState<DeliveryItem[]>([]);
   const [planFile, setPlanFile] = useState<File | null>(null);
   const [introductionFile, setIntroductionFile] = useState<File | null>(null);
@@ -226,7 +223,6 @@ function App() {
     if (!selected) {
       if (!selectedId) {
         setSupplierName("");
-        setDeliveryDate("");
         setItems([]);
         setPlanFile(null);
         setIntroductionFile(null);
@@ -236,7 +232,6 @@ function App() {
       return;
     }
     setSupplierName(selected.supplierName);
-    setDeliveryDate(selected.deliveryDate ?? "");
     setItems(selected.items.map((item) => ({ ...item })));
     setPlanFile(null);
     setIntroductionFile(null);
@@ -468,7 +463,6 @@ function App() {
         requestRef.key,
       );
       setSupplierName("");
-      setDeliveryDate("");
       setItems([]);
       setPlanFile(null);
       setIntroductionFile(null);
@@ -770,24 +764,24 @@ function App() {
         <aside className="sidebar">
           <p className="nav-label">KHÔNG GIAN LÀM VIỆC</p>
           {!admin && <button className={`nav-item ${effectivePage === "supplier" ? "active" : ""}`} onClick={() => openPage("supplier")}>
-            <span className="nav-icon">↗</span> Đăng ký giao hàng
+            <span className="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 19V5m0 0h14M5 5l6 6" /></svg></span> Đăng ký giao hàng
           </button>}
           {admin && <button className={`nav-item ${effectivePage === "admin" ? "active" : ""}`} onClick={() => openPage("admin")}>
-            <span className="nav-icon">▦</span> Quản trị tổng hợp
+            <span className="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" /></svg></span> Quản trị tổng hợp
           </button>}
           <button className={`nav-item ${effectivePage === "messages" ? "active" : ""}`} onClick={() => openPage("messages")}>
-            <span className="nav-icon">✉</span> Tin nhắn
+            <span className="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2" /><path d="m4.5 7 7.5 6 7.5-6" /></svg></span> Tin nhắn
             {unreadMessageCount > 0 && <span className="count nav-count">{unreadMessageCount > 99 ? "99+" : unreadMessageCount}</span>}
           </button>
           <button className={`nav-item ${effectivePage === "notifications" ? "active" : ""}`} onClick={() => openPage("notifications")}>
-            <span className="nav-icon">♧</span> Thông báo
+            <span className="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg></span> Thông báo
             {unreadNotificationCount > 0 && <span className="count nav-count">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
           </button>
           {developer && <button className={`nav-item ${effectivePage === "deepAdmin" ? "active" : ""}`} onClick={() => openPage("deepAdmin")}>
-            <span className="nav-icon">⌘</span> Deep Admin
+            <span className="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-12-2 14" /></svg></span> Deep Admin
           </button>}
           <button className={`nav-item ${effectivePage === "profile" ? "active" : ""}`} onClick={() => openPage("profile")}>
-            <span className="nav-icon">◎</span> Hồ sơ của tôi
+            <span className="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5" /><path d="M5 20a7 7 0 0 1 14 0" /></svg></span> Hồ sơ của tôi
           </button>
           <div className="sidebar-bottom">
             <div className="notification-head">
@@ -940,13 +934,11 @@ function App() {
                 request={selected}
                 admin
                 supplierName={supplierName}
-                deliveryDate={deliveryDate}
                 items={items}
                 saving={saving}
                 highlightTarget={highlightTarget}
                 onBack={() => { setSelectedId(null); setHighlightTarget(null); }}
                 onSupplierName={setSupplierName}
-                onDeliveryDate={setDeliveryDate}
                 onItemChange={updateItem}
                 onRemoveItem={removeItem}
                 planFileName={planFileName}
@@ -966,13 +958,11 @@ function App() {
                   request={selected}
                   admin={admin}
                   supplierName={supplierName}
-                  deliveryDate={deliveryDate}
                   items={items}
                   saving={saving}
                   highlightTarget={highlightTarget}
                   onBack={() => { setSelectedId(null); setHighlightTarget(null); }}
                   onSupplierName={setSupplierName}
-                  onDeliveryDate={setDeliveryDate}
                   onItemChange={updateItem}
                   onRemoveItem={removeItem}
                   planFileName={planFileName}

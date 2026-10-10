@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { EXCEL_TEMPLATE } from "../config";
 import { formatDate, formatSubmitDateKey, statusLabels } from "../lib/delivery";
 import { buildGroupedSupplierEmail, copyHtmlEmailToClipboard, formatGroupedPlainEmail, type AttachmentLink } from "../lib/email";
@@ -34,6 +35,7 @@ export default function AdminPage({
   const [dayEmailAddress, setDayEmailAddress] = useState("");
   const [dayEmailCopyMessage, setDayEmailCopyMessage] = useState("");
   const [showDayEmailDialog, setShowDayEmailDialog] = useState(false);
+  const emailPreviewRef = useRef<HTMLDivElement>(null);
   const [listPage, setListPage] = useState(0);
   const [busyRequestIds, setBusyRequestIds] = useState<Set<string>>(() => new Set());
   const [today, setToday] = useState(() => new Date());
@@ -165,11 +167,15 @@ export default function AdminPage({
   );
   const validDayEmailAddress = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dayEmailAddress.trim());
   const dayEmailHref = validDayEmailAddress && selectedDayItems.length > 0 && activeDate
-    ? `https://outlook.office.com/mail/deeplink/compose?to=${encodeQueryValue(dayEmailAddress.trim())}&subject=${encodeQueryValue(`Danh sách dự kiến giao hàng - Phiếu gửi ngày ${activeDate}`)}&body=${encodeQueryValue(dayEmailBody)}`
+    ? `https://outlook.office.com/mail/deeplink/compose?to=${encodeQueryValue(dayEmailAddress.trim())}&subject=${encodeQueryValue(`Danh sách dự kiến giao hàng - Phiếu gửi ngày ${activeDate}`)}`
     : undefined;
   async function copyDayRichEmail() {
     try {
-      await copyHtmlEmailToClipboard(dayEmailHtml, dayEmailBody);
+      const editedPreview = emailPreviewRef.current;
+      await copyHtmlEmailToClipboard(
+        editedPreview?.innerHTML ?? dayEmailHtml,
+        editedPreview?.innerText ?? dayEmailBody,
+      );
       setDayEmailCopyMessage("Đã sao chép email.");
     } catch (cause) {
       setDayEmailCopyMessage(cause instanceof Error ? cause.message : "Không sao chép được nội dung email.");
@@ -259,13 +265,22 @@ export default function AdminPage({
       <div className="page-heading admin-heading">
         <div><p className="eyebrow">QUẢN TRỊ</p><h1>Tổng hợp đăng ký giao hàng</h1><p className="muted">Quản lý theo ngày gửi phiếu, duyệt và soạn email danh sách dự kiến giao hàng.</p></div>
         <div className="export-actions">
-          <button className="button secondary" onClick={() => onExport(filteredRequests, "filtered")}>↓ Xuất kết quả lọc ({filteredRequests.length})</button>
-          <button className="button secondary" onClick={() => onExport(activeRequests, "all")}>↓ Xuất tất cả ({activeRequests.length})</button>
+          <button className="button secondary" onClick={() => onExport(filteredRequests, "filtered")}>
+            <svg className="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v4h14v-4" /></svg>
+            Xuất kết quả lọc ({filteredRequests.length})
+          </button>
+          <button className="button secondary" onClick={() => onExport(activeRequests, "all")}>
+            <svg className="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v4h14v-4" /></svg>
+            Xuất tất cả ({activeRequests.length})
+          </button>
         </div>
       </div>
 
       <div className="admin-today-summary" aria-label="Thông tin hôm nay">
-        <span>📌 Hôm nay đã nhận <strong>{todayRequests.length}</strong> phiếu</span>
+        <span>
+          <svg className="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v3m10-3v3M4 9h16M6 5h12a2 2 0 0 1 2 2v12H4V7a2 2 0 0 1 2-2Zm2 8h3v3H8z" /></svg>
+          Hôm nay đã nhận <strong>{todayRequests.length}</strong> phiếu
+        </span>
       </div>
 
       <div className="panel table-panel">
@@ -275,7 +290,7 @@ export default function AdminPage({
             <p className="muted small">Dữ liệu cập nhật theo thời gian thực</p>
           </div>
           <div className="filters admin-filters-wrap">
-            <input className="text-input search-input" placeholder="🔍 Tìm NCC, email, mã hàng…" value={search} onChange={(event) => setSearch(event.target.value)} />
+            <input className="text-input search-input" placeholder="Tìm NCC, email, mã hàng…" value={search} onChange={(event) => setSearch(event.target.value)} />
             <select className="text-input filter-select" value={status} onChange={(event) => setStatus(event.target.value)}>
               <option value="all">Tất cả trạng thái</option>
               <option value="pending">Chờ duyệt</option>
@@ -323,21 +338,40 @@ export default function AdminPage({
             {dayEmailCopyMessage && <p className="email-copy-message" role="status">{dayEmailCopyMessage}</p>}
           </div>
         )}
-        {showDayEmailDialog && activeDate && (
+        {showDayEmailDialog && activeDate && createPortal(
           <div className="email-dialog-backdrop" onClick={() => setShowDayEmailDialog(false)}>
             <div className="email-dialog" role="dialog" aria-modal="true" aria-label="Soạn email" onClick={(event) => event.stopPropagation()}>
               <div className="email-dialog-header">
                 <strong>Soạn email danh sách dự kiến giao</strong>
-                <button type="button" className="button plain" onClick={() => setShowDayEmailDialog(false)}>✕</button>
+                <button type="button" className="button plain" aria-label="Đóng dialog" onClick={() => setShowDayEmailDialog(false)}>
+                  <svg className="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+                </button>
               </div>
-              <p className="muted small">Sao chép nội dung bên dưới, sau đó chọn gửi bằng Outlook để mở compose mới.</p>
-              <textarea className="text-input" readOnly value={dayEmailBody} rows={16} />
+              <p className="muted small">Bạn có thể chỉnh sửa trực tiếp nội dung và bảng bên dưới. Sao chép để dán vào email, hoặc mở Outlook sau khi hoàn tất.</p>
+              <div
+                ref={emailPreviewRef}
+                className="email-dialog-preview"
+                contentEditable
+                suppressContentEditableWarning
+                role="textbox"
+                aria-label="Nội dung email có thể chỉnh sửa"
+                aria-multiline="true"
+                dangerouslySetInnerHTML={{ __html: dayEmailHtml }}
+              />
+              {dayEmailCopyMessage && <p className="email-copy-message" role="status">{dayEmailCopyMessage}</p>}
               <div className="email-dialog-actions">
-                <button type="button" className="button secondary" onClick={() => void copyDayRichEmail()}>Sao chép email</button>
-                <button type="button" className="button primary" disabled={!dayEmailHref} onClick={() => void openOutlookFromDayEmail()}>Gửi bằng Outlook</button>
+                <button type="button" className="button secondary" onClick={() => void copyDayRichEmail()}>
+                  <svg className="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h2" /></svg>
+                  Sao chép email
+                </button>
+                <button type="button" className="button primary" disabled={!dayEmailHref} onClick={() => void openOutlookFromDayEmail()}>
+                  <svg className="admin-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h18v14H3zM3 6l9 7 9-7" /></svg>
+                  Gửi bằng Outlook
+                </button>
               </div>
             </div>
-          </div>
+          </div>,
+          document.body,
         )}
         <div className="admin-tab-panel">
           <h3>

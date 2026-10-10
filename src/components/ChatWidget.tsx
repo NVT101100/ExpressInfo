@@ -5,7 +5,7 @@ import { EXCEL_TEMPLATE } from "../config";
 import { db } from "../firebase";
 import type { AdminRecipient } from "../hooks/usePortalData";
 import { logActivity } from "../lib/activity";
-import { formatDate, statusLabels } from "../lib/delivery";
+import { statusLabels } from "../lib/delivery";
 import Pagination from "./Pagination";
 import type { DeliveryRequest, MentionField, MentionTarget, MessageDocument } from "../types";
 
@@ -541,7 +541,6 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
             {admin ? (
               visibleContacts.map((contact) => {
                 const conversation = chatContacts.find((entry) => entry.uid === contact.uid);
-                const displayName = [contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email;
                 const last = conversation?.lastMessage || (conversation ? contact.email : `${contact.email} · Chưa có tin nhắn`);
                 const unread = unreadByContact[contact.uid] ?? 0;
                 return (
@@ -756,16 +755,17 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                 {mentionEnabled ? "✓ Đang bật @" : "@"}
               </button>
               <div className="messenger-input-wrap">
-                <input
+                <textarea
                   className="text-input messenger-text-input"
                   aria-label="Tin nhắn"
                   placeholder="Aa · Nhập tin nhắn…"
                   value={text}
+                  rows={1}
                   onChange={(event) => setText(event.target.value)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
-                      const form = (event.currentTarget as HTMLInputElement).form;
+                      const form = (event.currentTarget as HTMLTextAreaElement).form;
                       form?.requestSubmit();
                     }
                   }}

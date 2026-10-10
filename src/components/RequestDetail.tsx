@@ -18,13 +18,11 @@ interface RequestDetailProps {
   request: DeliveryRequest;
   admin: boolean;
   supplierName: string;
-  deliveryDate: string;
   items: DeliveryItem[];
   saving: boolean;
   highlightTarget?: MentionTarget | null;
   onBack: () => void;
   onSupplierName: (value: string) => void;
-  onDeliveryDate: (value: string) => void;
   onItemChange: (index: number, key: string, value: string) => void;
   onRemoveItem: (index: number) => void;
   planFileName: string;
@@ -41,13 +39,11 @@ export default function RequestDetail({
   request,
   admin,
   supplierName,
-  deliveryDate,
   items,
   saving,
   highlightTarget = null,
   onBack,
   onSupplierName,
-  onDeliveryDate,
   onItemChange,
   onRemoveItem,
   planFileName,
@@ -151,10 +147,10 @@ export default function RequestDetail({
   const encodeQueryValue = (value: string) => encodeURIComponent(value)
     .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
   const outlookComposeHref = validReceiverEmail && emailRows.length > 0
-    ? `https://outlook.office.com/mail/deeplink/compose?to=${encodeQueryValue(receiverEmail.trim())}&subject=${encodeQueryValue(emailSubject)}&body=${encodeQueryValue(emailBody)}`
+    ? `https://outlook.office.com/mail/deeplink/compose?to=${encodeQueryValue(receiverEmail.trim())}&subject=${encodeQueryValue(emailSubject)}`
     : undefined;
   const mailtoHref = validReceiverEmail && emailRows.length > 0
-    ? `mailto:${receiverEmail.trim()}?subject=${encodeQueryValue(emailSubject)}&body=${encodeQueryValue(emailBody)}`
+    ? `mailto:${receiverEmail.trim()}?subject=${encodeQueryValue(emailSubject)}`
     : undefined;
   async function copyRichEmail() {
     try {
