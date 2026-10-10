@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { User } from "firebase/auth";
 import { limitToLast, onValue, orderByChild, push, query, ref, remove, serverTimestamp, set } from "firebase/database";
 import { EXCEL_TEMPLATE } from "../config";
 import { db } from "../firebase";
 import type { AdminRecipient } from "../hooks/usePortalData";
 import { logActivity } from "../lib/activity";
-import { daysUntilDelivery, formatDate, statusLabels } from "../lib/delivery";
+import { formatDate, statusLabels } from "../lib/delivery";
 import Pagination from "./Pagination";
 import type { DeliveryRequest, MentionField, MentionTarget, MessageDocument } from "../types";
 
@@ -191,6 +191,36 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
   ), [chatContacts, contacts]);
   const visibleContacts = sortedContacts.slice(contactPage * CONTACT_PAGE_SIZE, (contactPage + 1) * CONTACT_PAGE_SIZE);
 
+  function getInitials(name = "") {
+    const clean = (name || "").trim();
+    if (!clean) return "?";
+    const parts = clean.split(/[\s·\-–_./,()]+/).filter(Boolean);
+    const first = parts[0]?.[0] ?? "";
+    const last = parts.length > 1 ? parts[parts.length - 1]?.[0] ?? "" : parts[0]?.[1] ?? "";
+    return (first + last).toUpperCase();
+  }
+  const avatarColors = ["#4a90e2", "#16734d", "#e67e22", "#9b59b6", "#e74c3c", "#16a085", "#8e44ad", "#27ae60", "#d35400", "#2980b9"];
+  function getAvatarColor(uid = "") {
+    if (!uid) return avatarColors[0];
+    let hash = 0;
+    for (let i = 0; i < uid.length; i++) hash = (hash * 31 + uid.charCodeAt(i)) >>> 0;
+    return avatarColors[hash % avatarColors.length];
+  }
+  function formatChatTime(value?: number) {
+    if (!value) return "";
+    const date = new Date(value);
+    const now = new Date();
+    const sameDay = date.toDateString() === now.toDateString();
+    return sameDay
+      ? date.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
+      : date.toLocaleString("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages.length]);
+
   useEffect(() => {
     if (admin && !contacts.some((contact) => contact.uid === selectedContactUid)) {
       setSelectedContactUid(contacts[0]?.uid ?? "");
@@ -248,10 +278,10 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
   );
   const mentionDates = useMemo(() => [...new Set(mentionRequests.map((request) => request.deliveryDate || "unknown"))]
     .sort((a, b) => {
-      const daysA = a === "unknown" ? null : daysUntilDelivery(a);
-      const daysB = b === "unknown" ? null : daysUntilDelivery(b);
-      const rank = (days: number | null) => days === 0 ? 0 : days !== null && days < 0 ? 1 : days !== null && days <= 2 ? 2 : days === null ? 4 : 3;
-      return rank(daysA) - rank(daysB) || (daysA ?? Number.MAX_SAFE_INTEGER) - (daysB ?? Number.MAX_SAFE_INTEGER);
+      if (a === "unknown" && b === "unknown") return 0;
+      if (a === "unknown") return 1;
+      if (b === "unknown") return -1;
+      return a.localeCompare(b);
     }), [mentionRequests]);
   const mentionSuppliers = useMemo(() => [...new Set(
     mentionRequests
@@ -263,7 +293,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
       (request.deliveryDate || "unknown") === mentionDate
       && request.supplierName === mentionSupplierName,
     )
-    .sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate)),
+    .sort((a, b) => (a.deliveryDate || "").localeCompare(b.deliveryDate || "")),
   [mentionDate, mentionRequests, mentionSupplierName]);
   useEffect(() => {
     if (!mentionDates.includes(mentionDate)) {
@@ -511,19 +541,37 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
             {admin ? (
               visibleContacts.map((contact) => {
                 const conversation = chatContacts.find((entry) => entry.uid === contact.uid);
+                const displayName = [contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email;
+                const last = conversation?.lastMessage || (conversation ? contact.email : `${contact.email} · Chưa có tin nhắn`);
+                const unread = unreadByContact[contact.uid] ?? 0;
                 return (
-                  <button key={contact.uid} className={`conversation-contact ${selectedContactUid === contact.uid ? "active" : ""}`} onClick={() => setSelectedContactUid(contact.uid)}>
-                    <strong>{[contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email}</strong>
-                    <span>{conversation?.lastMessage || (conversation ? contact.email : `${contact.email} · Chưa có tin nhắn`)}</span>
-                    {unreadByContact[contact.uid] > 0 && <span className="conversation-unread">{unreadByContact[contact.uid]} tin chưa đọc</span>}
+                  <button key={contact.uid} className={`conversation-contact contact-messenger-style ${selectedContactUid === contact.uid ? "active" : ""}`} onClick={() => setSelectedContactUid(contact.uid)}>
+                    <span className="contact-avatar" style={{ background: getAvatarColor(contact.uid) }}>{getInitials(contact.supplierName || contact.name || contact.email)}</span>
+                    <div className="contact-text">
+                      <div className="contact-row-1">
+                        <strong className="contact-name">{contact.supplierName || contact.name || contact.email}</strong>
+                        <span className="contact-time">{conversation?.lastMessageAt ? formatChatTime(conversation.lastMessageAt) : ""}</span>
+                      </div>
+                      <div className="contact-row-2">
+                        <span className="contact-last-message">{last.length > 50 ? `${last.slice(0, 50)}…` : last}</span>
+                        {unread > 0 && <span className="contact-unread-badge">{unread > 99 ? "99+" : unread}</span>}
+                      </div>
+                    </div>
                   </button>
                 );
               })
             ) : (
               visibleAdminRecipients.map((recipient) => (
-                <button key={recipient.uid} className={`conversation-contact ${selectedAdminUid === recipient.uid ? "active" : ""}`} onClick={() => setSelectedAdminUid(recipient.uid)}>
-                  <strong>{recipient.label}</strong>
-                  <span>{recipient.email}</span>
+                <button key={recipient.uid} className={`conversation-contact contact-messenger-style ${selectedAdminUid === recipient.uid ? "active" : ""}`} onClick={() => setSelectedAdminUid(recipient.uid)}>
+                  <span className="contact-avatar" style={{ background: getAvatarColor(recipient.uid) }}>{getInitials(recipient.label || recipient.email)}</span>
+                  <div className="contact-text">
+                    <div className="contact-row-1">
+                      <strong className="contact-name">{recipient.label}</strong>
+                    </div>
+                    <div className="contact-row-2">
+                      <span className="contact-last-message contact-admin-email">{recipient.email}</span>
+                    </div>
+                  </div>
                 </button>
               ))
             )}
@@ -536,63 +584,77 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
             onPageChange={setContactPage}
           />
         </aside>
-        <section className="chat-window panel" aria-label="Trò chuyện">
-          <header className="chat-window-header">
-            <div>
+        <section className="chat-window panel chat-messenger-window" aria-label="Trò chuyện">
+          <header className="chat-window-header messenger-header">
+            <div className="chat-header-info">
               <strong>{admin ? "Với người dùng" : contactName}</strong>
-              <span>{admin ? activeContact?.email || "Chọn người dùng để bắt đầu hội thoại" : contactName}</span>
+              <span className="chat-header-sub">{admin ? activeContact?.email || "Chọn người dùng để bắt đầu hội thoại" : contactName}</span>
             </div>
           </header>
-          <div className="chat-widget-messages" aria-live="polite">
+          <div className="chat-widget-messages chat-bubbles-container" aria-live="polite">
             {!chatUid ? (
-              <p className="muted small">Chọn một người trong danh sách để xem hoặc bắt đầu trò chuyện.</p>
+              <div className="chat-empty-center">
+                <span className="chat-empty-icon">💬</span>
+                <p className="muted small">Chọn một người trong danh sách để xem hoặc bắt đầu trò chuyện.</p>
+              </div>
             ) : messages.length === 0 ? (
-              <p className="muted small">Chưa có tin nhắn. Bắt đầu trò chuyện tại đây.</p>
-            ) : visibleMessages.map((message) => {
+              <div className="chat-empty-center">
+                <span className="chat-empty-icon">👋</span>
+                <p className="muted small">Chưa có tin nhắn. Bắt đầu trò chuyện tại đây.</p>
+              </div>
+            ) : visibleMessages.map((message, idx) => {
               const mention = message.mention;
+              const isOwn = message.senderUid === user.uid;
+              const prev = visibleMessages[idx - 1];
+              const groupedWithPrev = prev && prev.senderUid === message.senderUid && (message.createdAt || 0) - (prev.createdAt || 0) < 5 * 60 * 1000;
+              const showAvatar = !isOwn && !groupedWithPrev;
+              const senderDisplayName = admin
+                ? activeContactIsAdmin
+                  ? message.senderName || message.senderEmail
+                  : [message.supplierName, message.senderName].filter(Boolean).join(" · ") || message.senderEmail
+                : message.senderUid === user.uid
+                  ? `Bạn`
+                  : message.senderName || contactName;
               return (
-                <div key={message.id} className={`message ${message.senderUid === user.uid ? "own-message" : ""}`}>
-                  <div className="message-meta">
-                    <strong>
-                      {admin
-                        ? activeContactIsAdmin
-                          ? message.senderName || message.senderEmail
-                          : [message.supplierName, message.senderName].filter(Boolean).join(" · ") || message.senderEmail
-                        : message.senderUid === user.uid
-                          ? `Bạn · ${message.supplierName || supplierDisplayName} · ${message.senderName || user.email}`
-                          : message.senderName || contactName}
-                    </strong>
-                    <span>{formatDate(message.createdAt)}</span>
-                    {message.senderUid === user.uid && (
+                <div key={message.id} className={`bubble-row ${isOwn ? "bubble-own" : "bubble-other"} ${groupedWithPrev ? "bubble-grouped" : ""}`}>
+                  {!isOwn && <span className={`bubble-avatar-mini ${showAvatar ? "" : "bubble-avatar-hidden"}`} style={{ background: getAvatarColor(message.senderUid) }}>{getInitials(message.senderName || message.supplierName || message.senderEmail)}</span>}
+                  <div className={`bubble-wrap ${isOwn ? "bubble-right" : "bubble-left"}`}>
+                    {!isOwn && !groupedWithPrev && <span className="bubble-sender-name">{senderDisplayName}</span>}
+                    <div className={`message-bubble ${isOwn ? "bubble-blue" : "bubble-light"}`}>
+                      <p>{message.text}</p>
+                      {mention && (
+                        <button
+                          className="bubble-mention"
+                          onClick={() => {
+                            onOpenMention(mention);
+                          }}
+                        >
+                          📎 {mention.label}
+                        </button>
+                      )}
+                      <div className="bubble-meta-row">
+                        {isOwn && <span className="bubble-sent-indicator" title="Đã gửi">✓</span>}
+                        <span className="bubble-time">{formatChatTime(message.createdAt)}</span>
+                      </div>
+                    </div>
+                    {isOwn && (
                       <button
                         type="button"
-                        className="message-delete-icon"
+                        className="bubble-delete-btn"
                         aria-label="Xóa tin nhắn"
                         title="Xóa tin nhắn"
                         onClick={() => void deleteMessage(message.id)}
                       >
-                        <svg viewBox="0 0 24 24" aria-hidden="true">
-                          <path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3" />
-                        </svg>
+                        🗑
                       </button>
                     )}
                   </div>
-                  <p>{message.text}</p>
-                  {mention && (
-                    <button
-                      className="message-mention"
-                      onClick={() => {
-                        onOpenMention(mention);
-                      }}
-                    >
-                      ↗ {mention.label}
-                    </button>
-                  )}
                 </div>
               );
             })}
+            <div ref={messagesEndRef} />
           </div>
-          <Pagination page={messagePage} pageSize={MESSAGE_PAGE_SIZE} total={messages.length} onPageChange={setMessagePage} />
+          {messages.length > MESSAGE_PAGE_SIZE && <Pagination page={messagePage} pageSize={MESSAGE_PAGE_SIZE} total={messages.length} onPageChange={setMessagePage} />}
           {error && <p className="chat-error" role="alert">{error}</p>}
           {mentionEnabled && !activeContactIsAdmin && (
             <div className="mention-composer">
@@ -681,22 +743,46 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
               {mentionTarget && <span className="mention-preview">Đề cập: {mentionTarget.label}</span>}
             </div>
           )}
-          <form className="chat-form" onSubmit={(event) => void sendMessage(event)}>
-            <div className="chat-compose-input">
-              <button type="button" className={`mention-toggle ${mentionEnabled ? "active" : ""}`} disabled={!chatUid || sending || activeContactIsAdmin || mentionRequests.length === 0} aria-label="Đề cập nội dung phiếu" title={activeContactIsAdmin ? "Không đề cập phiếu trong chat giữa admin." : "Đề cập nội dung phiếu"} onClick={() => setMentionEnabled((enabled) => !enabled)}>@</button>
-              <input
-                className="text-input"
-                aria-label="Tin nhắn"
-                placeholder="Viết tin nhắn…"
-                value={text}
-                onChange={(event) => setText(event.target.value)}
-                maxLength={4000}
-                disabled={!chatUid || sending}
-              />
+          <form className="chat-form messenger-chat-form" onSubmit={(event) => void sendMessage(event)}>
+            <div className="chat-compose-input messenger-compose-wrap">
+              <button
+                type="button"
+                className={`mention-toggle mention-toggle-messenger ${mentionEnabled ? "active" : ""}`}
+                disabled={!chatUid || sending || activeContactIsAdmin || mentionRequests.length === 0}
+                aria-label="Đề cập nội dung phiếu"
+                title={activeContactIsAdmin ? "Không đề cập phiếu trong chat giữa admin." : "Đề cập nội dung phiếu"}
+                onClick={() => setMentionEnabled((enabled) => !enabled)}
+              >
+                {mentionEnabled ? "✓ Đang bật @" : "@"}
+              </button>
+              <div className="messenger-input-wrap">
+                <input
+                  className="text-input messenger-text-input"
+                  aria-label="Tin nhắn"
+                  placeholder="Aa · Nhập tin nhắn…"
+                  value={text}
+                  onChange={(event) => setText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      const form = (event.currentTarget as HTMLInputElement).form;
+                      form?.requestSubmit();
+                    }
+                  }}
+                  maxLength={4000}
+                  disabled={!chatUid || sending}
+                />
+              </div>
+              <button
+                className="send-button-messenger"
+                type="submit"
+                disabled={!chatUid || sending || !text.trim()}
+                aria-label="Gửi tin nhắn"
+                title="Gửi (Enter)"
+              >
+                {sending ? "…" : "➤"}
+              </button>
             </div>
-            <button className="button primary" disabled={!chatUid || sending || !text.trim()}>
-              {sending ? "…" : "Gửi"}
-            </button>
           </form>
         </section>
       </div>

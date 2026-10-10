@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EXCEL_TEMPLATE } from "../config";
-import { daysUntilDelivery, deliveryCountdownLabel, deliveryTone, formatDate, statusLabels } from "../lib/delivery";
-import { buildHtmlEmail, copyHtmlEmailToClipboard, formatPlainTextItems } from "../lib/email";
+import { formatDate, formatSubmitDateKey, statusLabels } from "../lib/delivery";
+import { buildGroupedSupplierEmail, copyHtmlEmailToClipboard, formatGroupedPlainEmail, type AttachmentLink } from "../lib/email";
 import type { DeliveryRequest, RequestStatus } from "../types";
 
 interface AdminPageProps {
@@ -11,8 +11,6 @@ interface AdminPageProps {
   focusRequestId?: string | null;
   onSelect: (id: string) => void;
   onStatusChange: (id: string, status: RequestStatus) => Promise<void>;
-  onDeliveryReminder: (id: string) => Promise<void>;
-  onDeliveryConfirmation: (id: string) => Promise<void>;
   onExport: (requests: DeliveryRequest[], mode: "filtered" | "all") => void;
 }
 
@@ -23,24 +21,22 @@ export default function AdminPage({
   focusRequestId = null,
   onSelect,
   onStatusChange,
-  onDeliveryReminder,
-  onDeliveryConfirmation,
   onExport,
 }: AdminPageProps) {
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [supplier, setSupplier] = useState("all");
-  const [deliveryFrom, setDeliveryFrom] = useState("");
-  const [deliveryTo, setDeliveryTo] = useState("");
+  const [submitFrom, setSubmitFrom] = useState("");
+  const [submitTo, setSubmitTo] = useState("");
   const [activeDate, setActiveDate] = useState<string | null>(null);
   const [activeSupplierUid, setActiveSupplierUid] = useState<string | null>(null);
   const [dayView, setDayView] = useState<"suppliers" | "items">("suppliers");
   const [dayEmailAddress, setDayEmailAddress] = useState("");
   const [dayEmailCopyMessage, setDayEmailCopyMessage] = useState("");
+  const [showDayEmailDialog, setShowDayEmailDialog] = useState(false);
   const [listPage, setListPage] = useState(0);
   const [busyRequestIds, setBusyRequestIds] = useState<Set<string>>(() => new Set());
   const [today, setToday] = useState(() => new Date());
-  const remindedDate = useRef("");
   const todayKey = [
     today.getFullYear(),
     String(today.getMonth() + 1).padStart(2, "0"),
@@ -58,25 +54,19 @@ export default function AdminPage({
       .filter((request) => status === "all" || request.status === status)
       .filter((request) => supplier === "all" || request.ownerUid === supplier)
       .filter((request) => {
-        const dates = request.items
-          .map((item) => item.expectedDeliveryDate)
-          .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date ?? ""));
-        const deliveryDates = dates.length ? dates : [request.deliveryDate];
-        return deliveryDates.some((date) =>
-          (!deliveryFrom || date >= deliveryFrom)
-          && (!deliveryTo || date <= deliveryTo),
-        );
+        const submitKey = formatSubmitDateKey(request.createdAt || Date.now());
+        return (!submitFrom || submitKey >= submitFrom)
+          && (!submitTo || submitKey <= submitTo);
       })
       .filter((request) => {
         if (!term) return true;
         return [
           request.supplierName,
           request.ownerEmail,
-          request.deliveryDate,
           ...request.items.flatMap((item) => Object.values(item)),
         ].join(" ").toLocaleLowerCase().includes(term);
       });
-  }, [activeRequests, deliveryFrom, deliveryTo, search, status, supplier]);
+  }, [activeRequests, search, status, supplier, submitFrom, submitTo]);
 
   useEffect(() => {
     const nextMidnight = new Date();
@@ -88,64 +78,6 @@ export default function AdminPage({
     return () => window.clearTimeout(timeout);
   }, [today]);
 
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const tomorrowDate = [
-    tomorrow.getFullYear(),
-    String(tomorrow.getMonth() + 1).padStart(2, "0"),
-    String(tomorrow.getDate()).padStart(2, "0"),
-  ].join("-");
-  const tomorrowRequests = activeRequests
-    .filter((request) =>
-      (request.items.some((item) => item.expectedDeliveryDate === tomorrowDate)
-        || (!request.items.some((item) => item.expectedDeliveryDate) && request.deliveryDate === tomorrowDate))
-      && (request.status === "approved" || request.status === "reminded"),
-    )
-    .sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
-  const overdueRequests = activeRequests
-    .filter((request) => request.status === "overdue")
-    .sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate));
-
-  useEffect(() => {
-    if (
-      !tomorrowRequests.length
-      || typeof Notification === "undefined"
-      || Notification.permission !== "granted"
-      || remindedDate.current === tomorrowDate
-    ) return;
-    try {
-      const notification = new Notification("Nhắc soạn email giao hàng", {
-        body: `Ngày mai có ${tomorrowRequests.length} phiếu giao hàng cần thông báo bên nhận.`,
-        tag: `delivery-email-reminder-${tomorrowDate}`,
-      });
-      notification.onclick = () => window.focus();
-      remindedDate.current = tomorrowDate;
-    } catch (cause) {
-      console.error("Không hiển thị được nhắc soạn email giao hàng.", cause);
-    }
-  }, [tomorrowDate, tomorrowRequests]);
-
-  const notifiedOverdueIds = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    for (const request of overdueRequests) {
-      if (notifiedOverdueIds.current.has(request.id)) continue;
-      try {
-        const notification = new Notification("Phiếu giao hàng trễ hạn", {
-          body: `${request.supplierName} · Lịch giao ${request.deliveryDate} chưa xác nhận hoàn tất.`,
-          tag: `delivery-overdue-${request.id}`,
-        });
-        notification.onclick = () => {
-          window.focus();
-          onSelect(request.id);
-        };
-        notifiedOverdueIds.current.add(request.id);
-      } catch (cause) {
-        console.error(`Không hiển thị được thông báo trễ giao cho ${request.id}.`, cause);
-      }
-    }
-  }, [onSelect, overdueRequests]);
-
   useEffect(() => {
     if (!focusRequestId) return;
     const focusedRequest = filteredRequests.find((request) => request.id === focusRequestId);
@@ -154,98 +86,86 @@ export default function AdminPage({
       setSearch("");
       setStatus("all");
       setSupplier("all");
-      setDeliveryFrom("");
-      setDeliveryTo("");
+      setSubmitFrom("");
+      setSubmitTo("");
       return;
     }
-    const date = focusedRequest.deliveryDate || "unknown";
+    const date = formatSubmitDateKey(focusedRequest.createdAt || Date.now());
     setActiveDate(date);
     setActiveSupplierUid(focusedRequest.ownerUid);
     setListPage(0);
   }, [activeRequests, filteredRequests, focusRequestId]);
 
-  const requestsByDate = useMemo(() => {
+  const requestsBySubmitDate = useMemo(() => {
     const dates = new Map<string, Map<string, { supplierName: string; ownerEmail: string; requests: DeliveryRequest[] }>>();
     for (const request of filteredRequests) {
-      const deliveryDates = [...new Set(request.items
-        .map((item) => item.expectedDeliveryDate)
-        .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date ?? "")))];
-      const datesForRequest = (deliveryDates.length ? deliveryDates : [request.deliveryDate || "unknown"])
-        .filter((date) => (!deliveryFrom || date >= deliveryFrom) && (!deliveryTo || date <= deliveryTo));
-      for (const date of datesForRequest) {
-        const dateSuppliers = dates.get(date) ?? new Map();
-        const supplierGroup = dateSuppliers.get(request.ownerUid) ?? {
-          supplierName: request.supplierName,
-          ownerEmail: request.ownerEmail,
-          requests: [],
-        };
-        supplierGroup.requests.push(request);
-        dateSuppliers.set(request.ownerUid, supplierGroup);
-        dates.set(date, dateSuppliers);
-      }
+      const submitDate = formatSubmitDateKey(request.createdAt || Date.now());
+      if ((submitFrom && submitDate < submitFrom) || (submitTo && submitDate > submitTo)) continue;
+      const dateSuppliers = dates.get(submitDate) ?? new Map();
+      const supplierGroup = dateSuppliers.get(request.ownerUid) ?? {
+        supplierName: request.supplierName,
+        ownerEmail: request.ownerEmail,
+        requests: [],
+      };
+      supplierGroup.requests.push(request);
+      dateSuppliers.set(request.ownerUid, supplierGroup);
+      dates.set(submitDate, dateSuppliers);
     }
-    const priority = (date: string, dateSuppliers: Map<string, { supplierName: string; ownerEmail: string; requests: DeliveryRequest[] }>) => {
-      const requestsForDate = [...dateSuppliers.values()].flatMap((group) => group.requests);
-      if (date === todayKey) return 0;
-      const tones = requestsForDate.map((request) => deliveryTone(date, request.status, today));
-      if (tones.includes("overdue")) return 1;
-      if (tones.includes("soon")) return 2;
-      if (tones.every((tone) => tone === "delivered")) return 3;
-      if (tones.includes("upcoming")) return 4;
-      return 5;
-    };
-    return [...dates.entries()].sort(([dateA, suppliersA], [dateB, suppliersB]) =>
-      priority(dateA, suppliersA) - priority(dateB, suppliersB)
-      || dateA.localeCompare(dateB),
-    );
-  }, [deliveryFrom, deliveryTo, filteredRequests, today, todayKey]);
-  const selectedDateGroup = requestsByDate.find(([date]) => date === activeDate);
+    return [...dates.entries()].sort(([dateA], [dateB]) => dateB.localeCompare(dateA));
+  }, [filteredRequests, submitFrom, submitTo]);
+
+  const selectedDateGroup = requestsBySubmitDate.find(([date]) => date === activeDate);
   const selectedSuppliers = selectedDateGroup
     ? [...selectedDateGroup[1].entries()].sort(([, a], [, b]) => a.supplierName.localeCompare(b.supplierName))
     : [];
   const selectedSupplierGroup = selectedSuppliers.find(([uid]) => uid === activeSupplierUid);
   const selectedSupplierRequests = selectedSupplierGroup
-    ? [...selectedSupplierGroup[1].requests].sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate))
+    ? [...selectedSupplierGroup[1].requests].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
     : [];
   const selectedDayRequests = activeDate
     ? filteredRequests
-      .filter((request) => request.items.some((item) => item.expectedDeliveryDate === activeDate)
-        || (!request.items.some((item) => item.expectedDeliveryDate) && (request.deliveryDate || "unknown") === activeDate))
+      .filter((request) => formatSubmitDateKey(request.createdAt || Date.now()) === activeDate)
       .sort((a, b) => a.supplierName.localeCompare(b.supplierName))
     : [];
   const selectedDayItems = selectedDayRequests.flatMap((request) =>
-    request.items.flatMap((item, index) =>
-      item.expectedDeliveryDate === activeDate
-        ? [{ request, item, index }]
-        : !request.items.some((entry) => entry.expectedDeliveryDate) && (request.deliveryDate || "unknown") === activeDate
-          ? [{ request, item, index }]
-          : [],
-    ),
+    request.items.map((item, index) => ({ request, item, index })),
   );
   const encodeQueryValue = (value: string) => encodeURIComponent(value)
     .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
-  const dayEmailBody = selectedDayRequests.flatMap((request) => [
-    `Nhà cung cấp: ${request.supplierName} · ${activeDate} · ${statusLabels[request.status]}`,
-    formatPlainTextItems(
-      EXCEL_TEMPLATE.columns.map((column) => column.label),
-      selectedDayItems
-        .filter((entry) => entry.request.id === request.id)
-        .map(({ item }) => EXCEL_TEMPLATE.columns.map((column) => item[column.key] ?? "")),
-    ),
-    "",
-  ]).join("\r\n");
-  const dayEmailHtml = buildHtmlEmail([
+
+  const emailParagraphs = [
     "Kính gửi bộ phận nhận hàng,",
-    `Danh sách hàng hóa dự kiến giao ngày ${activeDate ?? ""}:`,
+    `Dưới đây là danh sách hàng hóa dự kiến giao hàng, tổng hợp từ các phiếu được gửi ngày ${activeDate ?? ""}. Mỗi nhà cung cấp được nhóm riêng kèm file đính kèm (nếu có).`,
     "Trân trọng.",
-  ], ["Nhà cung cấp", ...EXCEL_TEMPLATE.columns.map((column) => column.label)],
-  selectedDayItems.map(({ request, item }) => [
-    request.supplierName,
-    ...EXCEL_TEMPLATE.columns.map((column) => item[column.key] ?? ""),
-  ]));
+  ];
+
+  const dayEmailGroups = selectedDayRequests.map((request) => {
+    const requestItems = selectedDayItems.filter((entry) => entry.request.id === request.id);
+    const attachments: AttachmentLink[] = [];
+    if (request.attachments?.deliveryPlan) attachments.push(request.attachments.deliveryPlan);
+    if (request.attachments?.companyIntroduction) attachments.push(request.attachments.companyIntroduction);
+    return {
+      supplierName: request.supplierName,
+      submitInfo: `Gửi ${formatDate(request.createdAt)} · ${statusLabels[request.status]}`,
+      rows: requestItems.map(({ item }) => EXCEL_TEMPLATE.columns.map((column) => item[column.key] ?? "")),
+      attachments,
+    };
+  });
+
+  const dayEmailBody = formatGroupedPlainEmail(
+    emailParagraphs,
+    EXCEL_TEMPLATE.columns.map((column) => column.label),
+    dayEmailGroups,
+  );
+
+  const dayEmailHtml = buildGroupedSupplierEmail(
+    emailParagraphs,
+    EXCEL_TEMPLATE.columns.map((column) => column.label),
+    dayEmailGroups,
+  );
   const validDayEmailAddress = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(dayEmailAddress.trim());
   const dayEmailHref = validDayEmailAddress && selectedDayItems.length > 0 && activeDate
-    ? `https://outlook.office.com/mail/deeplink/compose?to=${encodeQueryValue(dayEmailAddress.trim())}&subject=${encodeQueryValue(`Danh sách giao hàng ngày ${activeDate}`)}&body=${encodeQueryValue(dayEmailBody)}`
+    ? `https://outlook.office.com/mail/deeplink/compose?to=${encodeQueryValue(dayEmailAddress.trim())}&subject=${encodeQueryValue(`Danh sách dự kiến giao hàng - Phiếu gửi ngày ${activeDate}`)}&body=${encodeQueryValue(dayEmailBody)}`
     : undefined;
   async function copyDayRichEmail() {
     try {
@@ -255,20 +175,42 @@ export default function AdminPage({
       setDayEmailCopyMessage(cause instanceof Error ? cause.message : "Không sao chép được nội dung email.");
     }
   }
+
+  async function openDayEmailDialog() {
+    if (!validDayEmailAddress || !selectedDayItems.length || !activeDate) return;
+    setShowDayEmailDialog(true);
+    setDayEmailCopyMessage("");
+  }
+
+  async function openOutlookFromDayEmail() {
+    if (!dayEmailHref) return;
+    try {
+      await copyDayRichEmail();
+      setShowDayEmailDialog(false);
+      window.open(dayEmailHref, "_blank", "noopener,noreferrer");
+    } catch (cause) {
+      setDayEmailCopyMessage(cause instanceof Error ? cause.message : "Không mở được Outlook.");
+    }
+  }
   const PAGE_SIZE = 50;
   const currentList = !activeDate
-    ? requestsByDate
+    ? requestsBySubmitDate
     : !activeSupplierUid
       ? dayView === "items" ? selectedDayItems : selectedSuppliers
       : selectedSupplierRequests;
   const pageCount = Math.max(1, Math.ceil(currentList.length / PAGE_SIZE));
   const paginatedList = currentList.slice(listPage * PAGE_SIZE, (listPage + 1) * PAGE_SIZE);
-  function dateTone(date: string, dateRequests: DeliveryRequest[]) {
-    const tones = dateRequests.map((request) => deliveryTone(date, request.status, today));
-    if (tones.length > 0 && tones.every((tone) => tone === "delivered")) return "delivered";
+
+  function submitDateTone(date: string) {
     if (date === todayKey) return "today";
-    if (tones.includes("overdue")) return "overdue";
-    if (tones.includes("soon")) return "soon";
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayKey = [
+      yesterday.getFullYear(),
+      String(yesterday.getMonth() + 1).padStart(2, "0"),
+      String(yesterday.getDate()).padStart(2, "0"),
+    ].join("-");
+    if (date === yesterdayKey) return "soon";
     return "upcoming";
   }
 
@@ -298,7 +240,7 @@ export default function AdminPage({
 
   useEffect(() => {
     setListPage(0);
-  }, [search, status, supplier, deliveryFrom, deliveryTo]);
+  }, [search, status, supplier, submitFrom, submitTo]);
 
   useEffect(() => {
     if (!focusRequestId || !selectedSupplierRequests.some((request) => request.id === focusRequestId)) return;
@@ -306,87 +248,63 @@ export default function AdminPage({
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [focusRequestId, selectedSupplierRequests]);
 
+  function formatDateLabel(dateKey: string) {
+    return new Intl.DateTimeFormat("vi-VN", { dateStyle: "full" }).format(new Date(`${dateKey}T00:00:00`));
+  }
+
+  const todayRequests = activeRequests.filter((request) => formatSubmitDateKey(request.createdAt || Date.now()) === todayKey);
+
   return (
     <section className="admin-page">
       <div className="page-heading admin-heading">
-        <div><p className="eyebrow">QUẢN TRỊ</p><h1>Tổng hợp đăng ký</h1><p className="muted">Lọc phiếu theo tiêu chí, duyệt và xuất dữ liệu.</p></div>
+        <div><p className="eyebrow">QUẢN TRỊ</p><h1>Tổng hợp đăng ký giao hàng</h1><p className="muted">Quản lý theo ngày gửi phiếu, duyệt và soạn email danh sách dự kiến giao hàng.</p></div>
         <div className="export-actions">
           <button className="button secondary" onClick={() => onExport(filteredRequests, "filtered")}>↓ Xuất kết quả lọc ({filteredRequests.length})</button>
           <button className="button secondary" onClick={() => onExport(activeRequests, "all")}>↓ Xuất tất cả ({activeRequests.length})</button>
         </div>
       </div>
-      {tomorrowRequests.length > 0 && (
-        <section className="upcoming-mail-reminder" aria-label="Nhắc soạn email giao hàng">
-          <div className="upcoming-mail-copy">
-            <strong>Nhắc soạn email cho bên nhận hàng — ngày mai</strong>
-            <span>{tomorrowRequests.length} phiếu đã duyệt sắp đến lịch giao. Mở từng phiếu để chọn các dòng hàng và tạo email.</span>
-          </div>
-          <div className="upcoming-mail-list">
-            {tomorrowRequests.map((request) => (
-              <button
-                type="button"
-                className="upcoming-mail-request"
-                key={request.id}
-                onClick={() => onSelect(request.id)}
-              >
-                <span><strong>{request.supplierName}</strong> · {request.deliveryDate}</span>
-                <span className="button secondary">Mở phiếu →</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
-      {overdueRequests.length > 0 && (
-        <section className="overdue-alert" aria-label="Phiếu giao hàng quá hạn">
-          <div>
-            <strong>⚠ {overdueRequests.length} phiếu đã trễ giao, chưa xác nhận hoàn tất</strong>
-            <span>Nhà cung cấp đã được gửi thông báo; admin có thể nhắc giao hoặc xác nhận ngay trong danh sách phiếu.</span>
-          </div>
-          <div className="overdue-alert-list">
-            {overdueRequests.slice(0, 8).map((request) => (
-              <button key={request.id} onClick={() => onSelect(request.id)}>
-                <strong>{request.supplierName}</strong>
-                <span>{request.deliveryDate} · {deliveryCountdownLabel(daysUntilDelivery(request.deliveryDate))}</span>
-              </button>
-            ))}
-            {overdueRequests.length > 8 && <span className="muted small">Còn {overdueRequests.length - 8} phiếu trễ khác trong danh sách.</span>}
-          </div>
-        </section>
-      )}
+
+      <div className="admin-today-summary" aria-label="Thông tin hôm nay">
+        <span>📌 Hôm nay đã nhận <strong>{todayRequests.length}</strong> phiếu</span>
+      </div>
+
       <div className="panel table-panel">
-        <div className="toolbar">
-          <div><h2>Danh sách phiếu</h2><p className="muted small">Dữ liệu cập nhật theo thời gian thực</p></div>
-          <div className="filters">
-            <input className="text-input search-input" placeholder="Tìm NCC, email, mã hàng…" value={search} onChange={(event) => setSearch(event.target.value)} />
+        <div className="toolbar admin-toolbar-sticky">
+          <div className="toolbar-title-wrap">
+            <h2>Danh sách phiếu</h2>
+            <p className="muted small">Dữ liệu cập nhật theo thời gian thực</p>
+          </div>
+          <div className="filters admin-filters-wrap">
+            <input className="text-input search-input" placeholder="🔍 Tìm NCC, email, mã hàng…" value={search} onChange={(event) => setSearch(event.target.value)} />
             <select className="text-input filter-select" value={status} onChange={(event) => setStatus(event.target.value)}>
               <option value="all">Tất cả trạng thái</option>
               <option value="pending">Chờ duyệt</option>
               <option value="approved">Đã duyệt</option>
-              <option value="reminded">Đã nhắc giao</option>
-              <option value="delivered">Đã giao hàng</option>
               <option value="rejected">Từ chối</option>
             </select>
             <select className="text-input filter-select" value={supplier} onChange={(event) => setSupplier(event.target.value)}>
               <option value="all">Tất cả nhà cung cấp</option>
               {[...new Map(activeRequests.map((request) => [request.ownerUid, request.supplierName])).entries()].map(([uid, name]) => <option key={uid} value={uid}>{name}</option>)}
             </select>
-            <label className="filter-date"><span>Từ ngày giao</span><input className="text-input" type="date" value={deliveryFrom} onChange={(event) => setDeliveryFrom(event.target.value)} /></label>
-            <label className="filter-date"><span>Đến ngày giao</span><input className="text-input" type="date" value={deliveryTo} onChange={(event) => setDeliveryTo(event.target.value)} /></label>
+            <label className="filter-date"><span>Từ ngày gửi</span><input className="text-input" type="date" value={submitFrom} onChange={(event) => setSubmitFrom(event.target.value)} /></label>
+            <label className="filter-date"><span>Đến ngày gửi</span><input className="text-input" type="date" value={submitTo} onChange={(event) => setSubmitTo(event.target.value)} /></label>
           </div>
         </div>
-        <div className="filter-summary">
-          <span>Đang hiển thị <strong>{filteredRequests.length}</strong> / {activeRequests.length} phiếu</span>
-          <button className="clear-filters" onClick={() => { setSearch(""); setStatus("all"); setSupplier("all"); setDeliveryFrom(""); setDeliveryTo(""); }}>Xóa bộ lọc</button>
-        </div>
-        <nav className="admin-tabs" aria-label="Điều hướng phiếu">
-          <button className={!activeDate ? "active" : ""} onClick={() => { setActiveDate(null); setActiveSupplierUid(null); setListPage(0); }}>
-            Ngày giao <span>{requestsByDate.length}</span>
+        <nav className="admin-tabs admin-breadcrumbs" aria-label="Điều hướng phiếu">
+          <button type="button" className={!activeDate ? "active" : ""} onClick={() => { setActiveDate(null); setActiveSupplierUid(null); setListPage(0); }}>
+            Ngày gửi
           </button>
-          {activeDate && <button className={!activeSupplierUid ? "active" : ""} onClick={() => { setActiveSupplierUid(null); setListPage(0); }}>
-            {activeDate === "unknown" ? "Chưa có ngày giao" : new Intl.DateTimeFormat("vi-VN", { dateStyle: "full" }).format(new Date(`${activeDate}T00:00:00`))}
+          {activeDate && <span className="breadcrumb-separator">›</span>}
+          {activeDate && <button type="button" className={!activeSupplierUid ? "active" : ""} onClick={() => { setActiveSupplierUid(null); setListPage(0); }}>
+            {formatDateLabel(activeDate)}
           </button>}
-          {activeSupplierUid && <button className="active" onClick={() => setListPage(0)}>
-            {selectedSupplierGroup?.[1].supplierName ?? "Nhà cung cấp"} · Phiếu
+          {activeSupplierUid && <span className="breadcrumb-separator">›</span>}
+          {activeSupplierUid && <button type="button" className="active" onClick={() => setListPage(0)}>
+            {selectedSupplierGroup?.[1].supplierName ?? "Nhà cung cấp"}
+          </button>}
+          {activeSupplierUid && <span className="breadcrumb-separator">›</span>}
+          {activeSupplierUid && <button type="button" className="active current-path" onClick={() => setListPage(0)}>
+            Phiếu
           </button>}
         </nav>
         {activeDate && !activeSupplierUid && (
@@ -397,41 +315,51 @@ export default function AdminPage({
             </div>
             <div className="day-email-tools">
               <input className="text-input" type="email" value={dayEmailAddress} onChange={(event) => setDayEmailAddress(event.target.value)} placeholder="Email bên nhận hàng" aria-label="Email bên nhận hàng cho danh sách cả ngày" />
-              {dayEmailHref
-                ? <>
-                    <a className="button primary" href={dayEmailHref} target="_blank" rel="noopener noreferrer">Soạn email toàn bộ hàng trong ngày</a>
-                    <button type="button" className="button secondary" onClick={copyDayRichEmail}>Sao chép email</button>
-                  </>
-                : <button className="button primary" disabled>{validDayEmailAddress ? "Ngày này chưa có dòng hàng" : "Nhập email để soạn mail cả ngày"}</button>}
+              <button type="button" className="button primary" disabled={!validDayEmailAddress || !selectedDayItems.length || !activeDate} onClick={() => void openDayEmailDialog()}>
+                {validDayEmailAddress && selectedDayItems.length > 0 && activeDate ? "Soạn email danh sách dự kiến giao" : validDayEmailAddress ? "Ngày này chưa có dòng hàng" : "Nhập email để soạn mail cả ngày"}
+              </button>
+              <button type="button" className="button secondary" onClick={() => void copyDayRichEmail()}>Sao chép email</button>
             </div>
             {dayEmailCopyMessage && <p className="email-copy-message" role="status">{dayEmailCopyMessage}</p>}
           </div>
         )}
+        {showDayEmailDialog && activeDate && (
+          <div className="email-dialog-backdrop" onClick={() => setShowDayEmailDialog(false)}>
+            <div className="email-dialog" role="dialog" aria-modal="true" aria-label="Soạn email" onClick={(event) => event.stopPropagation()}>
+              <div className="email-dialog-header">
+                <strong>Soạn email danh sách dự kiến giao</strong>
+                <button type="button" className="button plain" onClick={() => setShowDayEmailDialog(false)}>✕</button>
+              </div>
+              <p className="muted small">Sao chép nội dung bên dưới, sau đó chọn gửi bằng Outlook để mở compose mới.</p>
+              <textarea className="text-input" readOnly value={dayEmailBody} rows={16} />
+              <div className="email-dialog-actions">
+                <button type="button" className="button secondary" onClick={() => void copyDayRichEmail()}>Sao chép email</button>
+                <button type="button" className="button primary" disabled={!dayEmailHref} onClick={() => void openOutlookFromDayEmail()}>Gửi bằng Outlook</button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="admin-tab-panel">
           <h3>
-            {!activeDate ? "Chọn ngày giao hàng" : !activeSupplierUid ? dayView === "items" ? "Toàn bộ hàng hóa trong ngày" : "Chọn nhà cung cấp" : `${selectedSupplierGroup?.[1].supplierName ?? ""} · Danh sách phiếu`}
+            {!activeDate ? "Chọn ngày gửi phiếu" : !activeSupplierUid ? dayView === "items" ? "Toàn bộ hàng hóa (danh sách dự kiến giao)" : "Chọn nhà cung cấp" : `${selectedSupplierGroup?.[1].supplierName ?? ""} · Danh sách phiếu`}
           </h3>
           {!filteredRequests.length ? <p className="empty-row">{loading ? "Đang tải danh sách…" : "Không tìm thấy phiếu phù hợp."}</p> : (
             <div className="admin-form-list">
               {paginatedList.map((entry) => {
                 if (!activeDate) {
-                  const [date, suppliers] = entry as typeof requestsByDate[number];
+                  const [date, suppliers] = entry as typeof requestsBySubmitDate[number];
                   const count = [...suppliers.values()].reduce((sum, group) => sum + group.requests.length, 0);
-                  const dateLabel = date === "unknown"
-                    ? "Chưa có ngày giao"
-                    : new Intl.DateTimeFormat("vi-VN", { dateStyle: "full" }).format(new Date(`${date}T00:00:00`));
-                  const dateRequests = [...suppliers.values()].flatMap((group) => group.requests);
-                  return <button className={`admin-tab-entry date-tab-${dateTone(date, dateRequests)}`} key={date} onClick={() => { setActiveDate(date); setActiveSupplierUid(null); setListPage(0); }}>
-                    <strong>{dateLabel}</strong><span>{count} phiếu · {suppliers.size} nhà cung cấp</span><span className="button table-action">Nhà cung cấp →</span>
+                  const pendingCount = [...suppliers.values()].flatMap((group) => group.requests).filter((r) => r.status === "pending").length;
+                  return <button className={`admin-tab-entry date-tab-${submitDateTone(date)}`} key={date} onClick={() => { setActiveDate(date); setActiveSupplierUid(null); setListPage(0); }}>
+                    <strong>{formatDateLabel(date)}</strong><span>{count} phiếu · {suppliers.size} NCC{pendingCount > 0 ? ` · ${pendingCount} chờ duyệt` : ""}</span><span className="button table-action">Chi tiết →</span>
                   </button>;
                 }
                 if (!activeSupplierUid) {
                   if (dayView === "items") {
                     const { request, item, index } = entry as typeof selectedDayItems[number];
                     return <div className="admin-day-item" key={`${request.id}:${index}`}>
-                      <div><strong>{item.name || Object.values(item).find(Boolean) || `Dòng ${index + 1}`}</strong>
+                      <div><strong>{item.materialName || item.name || Object.values(item).find(Boolean) || `Dòng ${index + 1}`}</strong>
                         <span>{request.supplierName} · {statusLabels[request.status]}</span>
-                        <span className={`delivery-countdown delivery-${deliveryTone(item.expectedDeliveryDate || request.deliveryDate, request.status, today)}`}>{request.status === "delivered" ? "Đã giao" : deliveryCountdownLabel(daysUntilDelivery(item.expectedDeliveryDate || request.deliveryDate, today))}</span>
                       </div>
                       <div className="admin-day-item-fields">{EXCEL_TEMPLATE.columns.map((column) => (
                         <span key={column.key}><small>{column.label}</small><strong>{item[column.key] || "—"}</strong></span>
@@ -440,12 +368,12 @@ export default function AdminPage({
                     </div>;
                   }
                   const [ownerUid, group] = entry as typeof selectedSuppliers[number];
+                  const pending = group.requests.filter((r) => r.status === "pending").length;
                   return <button className="admin-tab-entry" key={ownerUid} onClick={() => { setActiveSupplierUid(ownerUid); setListPage(0); }}>
-                    <strong>{group.supplierName}</strong><span>{group.ownerEmail} · {group.requests.length} phiếu</span><span className="button table-action">Xem phiếu →</span>
+                    <strong>{group.supplierName}</strong><span>{group.ownerEmail} · {group.requests.length} phiếu{pending > 0 ? ` · ${pending} chờ duyệt` : ""}</span><span className="button table-action">Xem phiếu →</span>
                   </button>;
                 }
                 const request = entry as DeliveryRequest;
-                const days = daysUntilDelivery(request.deliveryDate);
                 const busy = busyRequestIds.size > 0;
                 return <div
                   key={request.id}
@@ -455,7 +383,6 @@ export default function AdminPage({
                   <span className="admin-form-description">
                     <strong>{request.supplierName}</strong>
                     <small>{request.items.length} dòng hàng · Gửi {formatDate(request.createdAt)}</small>
-                    <span className={`delivery-countdown delivery-${deliveryTone(activeDate || request.deliveryDate, request.status, today)}`}>{request.status === "delivered" ? "Đã giao" : deliveryCountdownLabel(activeDate ? daysUntilDelivery(activeDate, today) : days)}</span>
                   </span>
                   <span className={`status status-${request.status}`}>{statusLabels[request.status]}</span>
                   <div className="admin-row-actions">
@@ -463,29 +390,30 @@ export default function AdminPage({
                       <button type="button" className="button row-action approve" disabled={busy} onClick={() => runRequestAction(request.id, () => onStatusChange(request.id, "approved"))}>Duyệt</button>
                       <button type="button" className="button row-action reject" disabled={busy} onClick={() => runRequestAction(request.id, () => onStatusChange(request.id, "rejected"))}>Từ chối</button>
                     </>}
-                    {["approved", "reminded", "overdue"].includes(request.status) && <>
-                      <button type="button" className="button row-action remind" disabled={busy} onClick={() => runRequestAction(request.id, () => onDeliveryReminder(request.id))}>Hối giao</button>
-                      <button type="button" className="button row-action confirm" disabled={busy} onClick={() => runRequestAction(request.id, () => onDeliveryConfirmation(request.id))}>Xác nhận giao</button>
-                    </>}
+                    {request.status === "approved" && (
+                      <span className="button row-action confirm disabled-button">Đã duyệt</span>
+                    )}
+                    {request.status === "rejected" && (
+                      <span className="button row-action reject disabled-button">Đã từ chối</span>
+                    )}
                     <button type="button" className="button table-action" onClick={() => onSelect(request.id)}>Chi tiết →</button>
                   </div>
                 </div>;
               })}
             </div>
           )}
+          <div className="filter-summary">
+            <span>Đang hiển thị <strong>{filteredRequests.length}</strong> / {activeRequests.length} phiếu</span>
+            {search || status !== "all" || supplier !== "all" || submitFrom || submitTo ? (
+              <button className="clear-filters clear-filters-btn" onClick={() => { setSearch(""); setStatus("all"); setSupplier("all"); setSubmitFrom(""); setSubmitTo(""); }}>✕ Xóa bộ lọc</button>
+            ) : null}
+          </div>
           {currentList.length > PAGE_SIZE && <div className="list-pagination">
             <button className="button secondary" disabled={listPage === 0} onClick={() => setListPage((page) => page - 1)}>← Trước</button>
             <span>Trang {listPage + 1} / {pageCount} · {currentList.length} mục</span>
             <button className="button secondary" disabled={listPage + 1 >= pageCount} onClick={() => setListPage((page) => page + 1)}>Sau →</button>
           </div>}
         </div>
-      </div>
-      <div className="admin-summary" aria-label="Tóm tắt danh sách phiếu">
-        <span><strong>{activeRequests.length}</strong> phiếu</span>
-        <span><strong>{activeRequests.filter((request) => request.status === "pending").length}</strong> chờ duyệt</span>
-        <span><strong>{activeRequests.filter((request) => ["approved", "reminded", "overdue"].includes(request.status)).length}</strong> chờ giao</span>
-        <span><strong>{activeRequests.filter((request) => request.status === "delivered").length}</strong> đã giao</span>
-        <span><strong>{new Set(activeRequests.map((request) => request.ownerUid)).size}</strong> nhà cung cấp</span>
       </div>
     </section>
   );

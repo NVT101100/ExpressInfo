@@ -20,7 +20,6 @@ import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "./config";
 import AdminPage from "./components/AdminPage";
 import ChatWidget from "./components/ChatWidget";
 import DeepAdminPage from "./components/DeepAdminPage";
-import DeliveryDateRequestsPage from "./components/DeliveryDateRequestsPage";
 import Pagination from "./components/Pagination";
 import ProfilePage from "./components/ProfilePage";
 import RequestDetail from "./components/RequestDetail";
@@ -29,9 +28,6 @@ import { auth, db, firebaseConfigured } from "./firebase";
 import { usePortalData } from "./hooks/usePortalData";
 import {
   exportRequests,
-  daysUntilDelivery,
-  deliveryCountdownLabel,
-  deliveryTone,
   downloadDeliveryTemplate,
   formatDate,
   parseSpreadsheet,
@@ -47,7 +43,6 @@ import {
 } from "./lib/googleDrive";
 import type {
   ActivityAction,
-  DeliveryDateChangeSelection,
   DeliveryItem,
   DeliveryRequest,
   ItemFieldChange,
@@ -58,7 +53,7 @@ import type {
   RequestStatus,
 } from "./types";
 
-type Page = "supplier" | "admin" | "deepAdmin" | "profile" | "messages" | "notifications" | "deliveryDateRequests";
+type Page = "supplier" | "admin" | "deepAdmin" | "profile" | "messages" | "notifications";
 
 function NotificationActions({
   open,
@@ -104,6 +99,8 @@ function App() {
   const [page, setPage] = useState<Page>("supplier");
   const [notificationPage, setNotificationPage] = useState(0);
   const [openNotificationMenuId, setOpenNotificationMenuId] = useState<string | null>(null);
+  const [notificationFilter, setNotificationFilter] = useState<"all" | "unread">("all");
+  const [markingAllRead, setMarkingAllRead] = useState(false);
   const [supplierRequestPage, setSupplierRequestPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [supplierName, setSupplierName] = useState("");
@@ -117,7 +114,6 @@ function App() {
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [highlightTarget, setHighlightTarget] = useState<MentionTarget | null>(null);
-  const [deliveryDateRefresh, setDeliveryDateRefresh] = useState(() => new Date());
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const openMessagesPage = useCallback(() => setPage("messages"), []);
 
@@ -136,17 +132,44 @@ function App() {
     setError,
   );
   const admin = role === "admin";
+  const effectivePage = admin && page === "supplier" ? "admin" : page;
   const developer = role === "developer"
     || user?.email?.toLowerCase() === "nvthoi19112002@gmail.com";
   const selected = requests.find((request) => request.id === selectedId) ?? null;
   const seenNotificationIds = useRef<Set<string> | null>(null);
   const notificationOwnerUid = useRef<string | null>(null);
-  const overdueSyncInProgress = useRef<Set<string>>(new Set());
   const unreadNotificationCount = notifications.reduce(
     (count, notification) => count + (deletedNotificationIds.has(notification.id) || readNotificationIds.has(notification.id) ? 0 : 1),
     0,
   );
   const visibleNotifications = notifications.filter((notification) => !deletedNotificationIds.has(notification.id));
+  const filteredNotifications = notificationFilter === "unread"
+    ? visibleNotifications.filter((notification) => !readNotificationIds.has(notification.id))
+    : visibleNotifications;
+
+  async function markAllNotificationsRead() {
+    if (!db || !user || unreadNotificationCount === 0) return;
+    setMarkingAllRead(true);
+    try {
+      const batch = visibleNotifications
+        .filter((notification) => !readNotificationIds.has(notification.id))
+        .slice(0, 100);
+      const updates: Record<string, unknown> = {};
+      const now = Date.now();
+      for (const notification of batch) {
+        updates[`notifications/notificationReads/${user.uid}/${notification.id}`] = now;
+      }
+      if (Object.keys(updates).length > 0) {
+        const { update } = await import("firebase/database");
+        await update(ref(db), updates);
+      }
+      setNotice(`Đã đánh dấu ${batch.length} thông báo là đã đọc.`);
+    } catch (cause) {
+      setError(`Không thể đánh dấu tất cả đã đọc: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
+    } finally {
+      setMarkingAllRead(false);
+    }
+  }
 
   async function markNotificationRead(notificationId: string) {
     if (!db || !user || readNotificationIds.has(notificationId)) return;
@@ -162,6 +185,7 @@ function App() {
     try {
       await set(ref(db, `notifications/deleted/${user.uid}/${notificationId}`), serverTimestamp());
       setOpenNotificationMenuId(null);
+      setNotice("Đã xóa thông báo.");
     } catch (cause) {
       setError(`Không thể xóa thông báo: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
     }
@@ -212,23 +236,13 @@ function App() {
       return;
     }
     setSupplierName(selected.supplierName);
-    setDeliveryDate(selected.deliveryDate);
+    setDeliveryDate(selected.deliveryDate ?? "");
     setItems(selected.items.map((item) => ({ ...item })));
     setPlanFile(null);
     setIntroductionFile(null);
     setPlanFileName(selected.attachments?.deliveryPlan?.name ?? "");
     setIntroductionFileName(selected.attachments?.companyIntroduction?.name ?? "");
   }, [selected]);
-
-  useEffect(() => {
-    const nextMidnight = new Date();
-    nextMidnight.setHours(24, 0, 1, 0);
-    const timeout = window.setTimeout(
-      () => setDeliveryDateRefresh(new Date()),
-      Math.max(1000, nextMidnight.getTime() - Date.now()),
-    );
-    return () => window.clearTimeout(timeout);
-  }, [deliveryDateRefresh]);
 
   useEffect(() => {
     if (!selected && !supplierName && profile.organization) {
@@ -254,19 +268,9 @@ function App() {
           try {
             const title = notification.event === "request_submitted"
               ? "Có phiếu giao hàng mới"
-              : notification.event === "delivery_reminder"
-                ? "Nhắc lịch giao hàng"
-                : notification.event === "delivery_overdue"
-                  ? "Phiếu giao hàng đã trễ hạn"
-                  : notification.event === "delivery_confirmed"
-                    ? "Đã xác nhận giao hàng"
-                    : notification.event === "delivery_date_requested"
-                      ? "Yêu cầu đổi ngày giao hàng"
-                      : notification.event === "delivery_date_response"
-                        ? "Phản hồi yêu cầu đổi ngày giao"
-                        : notification.event === "request_status"
-                          ? "Cập nhật trạng thái phiếu giao hàng"
-                          : "Thông báo giao hàng";
+              : notification.event === "request_status"
+                ? "Cập nhật trạng thái phiếu giao hàng"
+                : "Thông báo giao hàng";
             const desktopNotification = new Notification(title, {
               body: notification.text,
               tag: `delivery-${notification.id}`,
@@ -275,11 +279,7 @@ function App() {
             desktopNotification.onclick = () => {
               window.focus();
               void markNotificationRead(notification.id);
-              if (notification.event === "delivery_date_requested" || notification.event === "delivery_date_response") {
-                setSelectedId(null);
-                setHighlightTarget(null);
-                setPage("deliveryDateRequests");
-              } else if (notification.requestId) {
+              if (notification.requestId) {
                 setPage(admin ? "admin" : "supplier");
                 setSelectedId(notification.requestId);
               }
@@ -293,68 +293,12 @@ function App() {
     seenNotificationIds.current = nextIds;
   }, [admin, visibleNotifications, notificationsLoaded]);
 
-  useEffect(() => {
-    if (!admin || !user) return;
-    const overdueRequests = requests.filter((request) =>
-      !request.deleted
-      && ["approved", "reminded"].includes(request.status)
-      && daysUntilDelivery(request.deliveryDate, deliveryDateRefresh) !== null
-      && daysUntilDelivery(request.deliveryDate, deliveryDateRefresh)! < 0
-      && !overdueSyncInProgress.current.has(request.id),
-    );
-    for (const request of overdueRequests) {
-      overdueSyncInProgress.current.add(request.id);
-      void (async () => {
-        try {
-          if (!db) throw new Error("Firebase chưa sẵn sàng.");
-          const latestSnapshot = await get(ref(db, `requests/${request.id}`));
-          if (!latestSnapshot.exists()) return;
-          const latestRequest = requestFromSnapshot(
-            request.id,
-            latestSnapshot.val() as Record<string, unknown>,
-          );
-          if (
-            latestRequest.deleted
-            || !["approved", "reminded"].includes(latestRequest.status)
-            || daysUntilDelivery(latestRequest.deliveryDate, deliveryDateRefresh) === null
-            || daysUntilDelivery(latestRequest.deliveryDate, deliveryDateRefresh)! >= 0
-          ) return;
-          await saveRevision(latestRequest, {}, "overdue");
-          await recordActivity(
-            "request_status_changed",
-            "Tự động đánh dấu trễ giao vì quá ngày giao nhưng chưa xác nhận hoàn tất.",
-            request.id,
-          );
-          await notify(
-            request.id,
-            `${request.supplierName} · Phiếu giao ngày ${request.deliveryDate} đã quá hạn và chưa xác nhận giao hàng. Vui lòng cập nhật tình trạng giao.`,
-            {
-              event: "delivery_overdue",
-              supplierName: request.supplierName,
-              senderName: "Hệ thống",
-            },
-            { recipientRole: "supplier", recipientUid: request.ownerUid },
-          );
-        } catch (cause) {
-          setError(`Không cập nhật được cảnh báo trễ giao cho ${request.supplierName}: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
-        } finally {
-          overdueSyncInProgress.current.delete(request.id);
-        }
-      })();
-    }
-  }, [admin, deliveryDateRefresh, requests, user]);
-
   const supplierRequests = useMemo(
     () => requests.filter((request) => !request.deleted).sort((a, b) => {
-      const rank = (request: DeliveryRequest) => {
-        const days = daysUntilDelivery(request.deliveryDate, deliveryDateRefresh);
-        if (days === 0) return 0;
-        const tone = deliveryTone(request.deliveryDate, request.status, deliveryDateRefresh);
-        return tone === "overdue" ? 1 : tone === "soon" ? 2 : tone === "delivered" ? 3 : 4;
-      };
-      return rank(a) - rank(b) || a.deliveryDate.localeCompare(b.deliveryDate);
+      const statusRank = (status: RequestStatus) => status === "pending" ? 0 : status === "approved" ? 1 : 2;
+      return statusRank(a.status) - statusRank(b.status) || (b.createdAt || 0) - (a.createdAt || 0);
     }),
-    [deliveryDateRefresh, requests],
+    [requests],
   );
   const supplierRequestPageCount = Math.ceil(supplierRequests.length / 8);
   const displayedSupplierRequests = supplierRequests.slice(supplierRequestPage * 8, (supplierRequestPage + 1) * 8);
@@ -435,7 +379,7 @@ function App() {
     requestId: string,
     text: string,
     details: {
-      event?: "request_submitted" | "request_status" | "request_updated" | "delivery_reminder" | "delivery_overdue" | "delivery_confirmed" | "delivery_date_requested" | "delivery_date_response";
+      event?: "request_submitted" | "request_status" | "request_updated";
       supplierName: string;
       senderName: string;
     },
@@ -496,14 +440,6 @@ function App() {
       setError("Hãy nhập tên nhà cung cấp, tải file kế hoạch Excel và giấy giới thiệu.");
       return;
     }
-    const expectedDates = items
-      .map((item) => item.expectedDeliveryDate)
-      .filter((date): date is string => /^\d{4}-\d{2}-\d{2}$/.test(date ?? ""))
-      .sort();
-    if (!expectedDates.length || items.some((item) => !/^\d{4}-\d{2}-\d{2}$/.test(item.expectedDeliveryDate ?? ""))) {
-      setError("Mỗi dòng hàng cần có ngày giao dự kiến hợp lệ trong file Excel.");
-      return;
-    }
     setSaving(true);
     setError("");
     try {
@@ -520,7 +456,6 @@ function App() {
         ownerName: user.displayName ?? user.email ?? "Nhà cung cấp",
         supplierName: supplierName.trim(),
         deliveryGroup: DELIVERY_GROUP,
-        deliveryDate: expectedDates[0],
         items,
         attachments: { deliveryPlan, companyIntroduction },
         createdAt: serverTimestamp(),
@@ -529,7 +464,7 @@ function App() {
       setNotice("Đã gửi đăng ký giao hàng.");
       await recordActivity(
         "request_created",
-        `Tạo phiếu giao hàng cho ${supplierName.trim()} · từ ${expectedDates[0]} · ${items.length} dòng hàng.`,
+        `Tạo phiếu giao hàng cho ${supplierName.trim()} · ${items.length} dòng hàng.`,
         requestRef.key,
       );
       setSupplierName("");
@@ -569,17 +504,9 @@ function App() {
     setNotice("");
     try {
       const parsed = await parseSpreadsheet(file);
-      if (parsed.some((item) => !/^\d{4}-\d{2}-\d{2}$/.test(item.expectedDeliveryDate ?? ""))) {
-        throw new Error("Cột “Ngày giao dự kiến” phải có ngày hợp lệ ở tất cả các dòng.");
-      }
       setItems(parsed);
       setPlanFile(file);
       setPlanFileName(file.name);
-      const earliestDate = parsed
-        .map((item) => item.expectedDeliveryDate)
-        .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date ?? ""))
-        .sort()[0];
-      if (earliestDate) setDeliveryDate(earliestDate);
       await recordActivity(
         "spreadsheet_uploaded",
         `Tải và đọc file Excel "${file.name}" gồm ${parsed.length} dòng hàng.`,
@@ -624,184 +551,6 @@ function App() {
     await set(revisionRef, revision);
   }
 
-  async function handleRequestDeliveryDateChanges(selection: DeliveryDateChangeSelection[]) {
-    if (!db || !user) return;
-    const database = db;
-    if (selection.length === 0) {
-      setError("Chọn ít nhất một mặt hàng và đặt ngày giao mới cho từng mặt hàng.");
-      return;
-    }
-    let validated: Array<DeliveryDateChangeSelection & { request: DeliveryRequest; item: DeliveryItem }>;
-    try {
-      const uniqueKeys = new Set<string>();
-      validated = selection.map((entry) => {
-        const key = `${entry.requestId}:${entry.itemIndex}`;
-        if (uniqueKeys.has(key)) throw new Error("Một mặt hàng bị chọn nhiều lần.");
-        uniqueKeys.add(key);
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.requestedDate)) {
-          throw new Error("Hãy chọn ngày giao mới hợp lệ cho tất cả mặt hàng đã chọn.");
-        }
-        if (!Number.isInteger(entry.itemIndex) || entry.itemIndex < 0) {
-          throw new Error("Một trong các mặt hàng đã chọn không hợp lệ.");
-        }
-        const request = requests.find((candidate) => candidate.id === entry.requestId);
-        if (!request || request.deleted) throw new Error("Không tìm thấy một trong các phiếu đã chọn.");
-        if (!admin && request.ownerUid !== user.uid) {
-          throw new Error("Bạn chỉ có thể gửi đề nghị đổi ngày cho phiếu của mình.");
-        }
-        const item = request.items[entry.itemIndex];
-        if (!item) throw new Error("Không tìm thấy một trong các mặt hàng đã chọn.");
-        if (entry.requestedDate === item.expectedDeliveryDate) {
-          throw new Error("Ngày giao mới phải khác ngày hiện tại ở tất cả mặt hàng đã chọn.");
-        }
-        if (request.deliveryDateRequests.some((proposal) => proposal.itemIndex === entry.itemIndex && proposal.status === "pending")) {
-          throw new Error("Một trong các mặt hàng đã có yêu cầu đang chờ phản hồi.");
-        }
-        return { ...entry, request, item };
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Các mặt hàng đã chọn không hợp lệ.");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      await Promise.all(validated.map(async ({ request, item, itemIndex, requestedDate }) => {
-        const proposalRef = push(ref(database, `requests/${request.id}/deliveryDateRequests`));
-        if (!proposalRef.key) throw new Error("Không tạo được mã yêu cầu đổi ngày.");
-        await set(proposalRef, {
-          itemIndex,
-          itemName: (item.materialName || item.name || "").slice(0, 240),
-          itemSku: (item.sku || item.skuNumber || item.poNumber || "").slice(0, 120),
-          currentDate: item.expectedDeliveryDate ?? "",
-          requestedDate,
-          status: "pending",
-          createdAt: serverTimestamp(),
-          createdByUid: user.uid,
-          createdByEmail: user.email ?? "",
-        });
-      }));
-
-      const byRequest = new Map<string, typeof validated>();
-      for (const entry of validated) {
-        const current = byRequest.get(entry.request.id) ?? [];
-        current.push(entry);
-        byRequest.set(entry.request.id, current);
-      }
-      await Promise.all([...byRequest].map(([, entriesForRequest]) => {
-        const first = entriesForRequest[0];
-        const summary = entriesForRequest
-          .map(({ item, itemIndex, requestedDate }) => `${item.materialName || item.name || `dòng ${itemIndex + 1}`}: ${requestedDate}`)
-          .join("; ")
-          .slice(0, 330);
-        const senderName = profile.displayName || user.displayName || user.email || (admin ? "Quản trị viên" : first.request.supplierName);
-        return notify(
-          first.request.id,
-          `${first.request.supplierName} · ${admin ? "Admin" : "Nhà cung cấp"} đề nghị đổi ngày cho ${entriesForRequest.length} mặt hàng: ${summary}.`,
-          {
-            event: "delivery_date_requested",
-            supplierName: first.request.supplierName,
-            senderName,
-          },
-          admin
-            ? { recipientRole: "supplier", recipientUid: first.request.ownerUid }
-            : { recipientRole: "admin" },
-        );
-      }));
-      setNotice(`Đã gửi ${validated.length} đề nghị đổi ngày giao ${admin ? "cho nhà cung cấp" : "đến admin"}.`);
-      setPage("deliveryDateRequests");
-    } catch (cause) {
-      setError(`Không gửi được các yêu cầu thay đổi ngày giao: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleRespondToDeliveryDateChange(
-    proposalId: string,
-    accept: boolean,
-    requestId: string,
-  ) {
-    const targetRequest = requests.find((request) => request.id === requestId);
-    const proposal = targetRequest?.deliveryDateRequests.find((entry) => entry.id === proposalId);
-    if (!db || !user || !targetRequest || targetRequest.deleted || !proposal) return;
-    const canRespond = admin
-      ? proposal.createdByUid === targetRequest.ownerUid
-      : targetRequest.ownerUid === user.uid && proposal.createdByUid !== user.uid;
-    if (!canRespond) {
-      setError("Bạn không có quyền phản hồi đề nghị đổi ngày này.");
-      return;
-    }
-    if (proposal.status !== "pending") {
-      setError("Yêu cầu này đã được phản hồi trước đó.");
-      return;
-    }
-    const item = targetRequest.items[proposal.itemIndex];
-    if (accept && (!item || item.expectedDeliveryDate !== proposal.currentDate)) {
-      setError("Mặt hàng hoặc ngày giao đã thay đổi sau khi gửi đề nghị. Vui lòng gửi đề nghị mới.");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    try {
-      const updates: Record<string, unknown> = {
-        [`requests/${targetRequest.id}/deliveryDateRequests/${proposalId}/status`]: accept ? "accepted" : "rejected",
-        [`requests/${targetRequest.id}/deliveryDateRequests/${proposalId}/responseAt`]: serverTimestamp(),
-        [`requests/${targetRequest.id}/deliveryDateRequests/${proposalId}/responseByUid`]: user.uid,
-      };
-      if (accept) {
-        const revisionRef = push(ref(db, `requests/${targetRequest.id}/revisions`));
-        if (!revisionRef.key) throw new Error("Không tạo được lịch sử cập nhật ngày giao.");
-        const nextItems = targetRequest.items.map((entry, index) =>
-          index === proposal.itemIndex
-            ? { ...entry, expectedDeliveryDate: proposal.requestedDate }
-            : entry,
-        );
-        const nextDeliveryDate = nextItems
-          .map((entry) => entry.expectedDeliveryDate)
-          .filter((date): date is string => /^\d{4}-\d{2}-\d{2}$/.test(date ?? ""))
-          .sort()[0];
-        updates[`requests/${targetRequest.id}/revisions/${revisionRef.key}`] = {
-          actorUid: user.uid,
-          actorEmail: user.email ?? "",
-          createdAt: serverTimestamp(),
-          changes: {
-            ...(nextDeliveryDate && nextDeliveryDate !== targetRequest.deliveryDate
-              ? { deliveryDate: nextDeliveryDate }
-              : {}),
-            itemChanges: [{
-              index: proposal.itemIndex,
-              key: "expectedDeliveryDate",
-              value: proposal.requestedDate,
-            }],
-          },
-        };
-      }
-      await update(ref(db), updates);
-      const responder = admin ? "Admin" : "Nhà cung cấp";
-      const responseText = accept
-        ? `${responder} đã chấp nhận đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}" sang ${proposal.requestedDate}.`
-        : `${responder} đã từ chối đề nghị đổi ngày giao mặt hàng "${proposal.itemName || `dòng ${proposal.itemIndex + 1}`}".`;
-      await notify(
-        targetRequest.id,
-        `${targetRequest.supplierName} · ${responseText}`,
-        {
-          event: "delivery_date_response",
-          supplierName: targetRequest.supplierName,
-          senderName: profile.displayName || user.displayName || user.email || responder,
-        },
-        proposal.createdByUid === targetRequest.ownerUid
-          ? { recipientRole: "supplier", recipientUid: targetRequest.ownerUid }
-          : { recipientRole: "admin" },
-      );
-      setNotice(accept ? "Đã chấp nhận yêu cầu; ngày giao mặt hàng được cập nhật." : "Đã từ chối yêu cầu thay đổi ngày giao.");
-    } catch (cause) {
-      setError(`Không lưu được phản hồi thay đổi ngày giao: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
   async function handleSaveEdit() {
     if (!selected || !user) return;
     if (!supplierName.trim()) {
@@ -814,13 +563,6 @@ function App() {
     }
     const changes: RequestChanges = {};
     if (supplierName.trim() !== selected.supplierName) changes.supplierName = supplierName.trim();
-    const expectedDates = items.map((item) => item.expectedDeliveryDate).filter(Boolean).sort();
-    if (items.some((item) => !/^\d{4}-\d{2}-\d{2}$/.test(item.expectedDeliveryDate ?? ""))) {
-      setError("Mỗi dòng hàng cần có ngày giao dự kiến hợp lệ.");
-      return;
-    }
-    const effectiveDeliveryDate = admin ? deliveryDate : expectedDates[0];
-    if (effectiveDeliveryDate && effectiveDeliveryDate !== selected.deliveryDate) changes.deliveryDate = effectiveDeliveryDate;
     if (items.length !== selected.items.length) {
       changes.items = items.map((item) => ({ ...item }));
     } else {
@@ -896,7 +638,7 @@ function App() {
 
   async function handleStatusChange(status: RequestStatus, requestId = selected?.id) {
     const targetRequest = requests.find((request) => request.id === requestId);
-    if (!targetRequest || targetRequest.deleted || !admin || targetRequest.status === status || status === "reminded" || status === "delivered") return;
+    if (!targetRequest || targetRequest.deleted || !admin || targetRequest.status === status) return;
     setSaving(true);
     setError("");
     try {
@@ -924,71 +666,6 @@ function App() {
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không cập nhật được trạng thái.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDeliveryReminder(requestId = selected?.id) {
-    const targetRequest = requests.find((request) => request.id === requestId);
-    if (!targetRequest || targetRequest.deleted || !admin || !user || !["approved", "reminded", "overdue"].includes(targetRequest.status)) return;
-    setSaving(true);
-    setError("");
-    try {
-      await saveRevision(targetRequest, {}, targetRequest.status === "overdue" ? "overdue" : "reminded");
-      await recordActivity(
-        "request_status_changed",
-        "Admin gửi nhắc lịch giao hàng cho nhà cung cấp.",
-        targetRequest.id,
-      );
-      await notify(
-        targetRequest.id,
-        `${targetRequest.supplierName} · Nhắc giao hàng: lịch giao ${targetRequest.deliveryDate}.`,
-        {
-          event: "delivery_reminder",
-          supplierName: targetRequest.supplierName,
-          senderName: profile.displayName || user.displayName || user.email || "Quản trị viên",
-        },
-        { recipientRole: "supplier", recipientUid: targetRequest.ownerUid },
-      );
-      setNotice(`Đã gửi nhắc giao hàng cho ${targetRequest.supplierName}.`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không gửi được nhắc giao hàng.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDeliveryConfirmation(requestId = selected?.id) {
-    const targetRequest = requests.find((request) => request.id === requestId);
-    if (!targetRequest || targetRequest.deleted || !user || (!admin && targetRequest.ownerUid !== user.uid)) return;
-    if (!["approved", "reminded", "overdue"].includes(targetRequest.status)) return;
-    setSaving(true);
-    setError("");
-    try {
-      await saveRevision(targetRequest, {}, "delivered");
-      await recordActivity(
-        "request_status_changed",
-        `${admin ? "Admin" : "Nhà cung cấp"} xác nhận đã giao hàng.`,
-        targetRequest.id,
-      );
-      await notify(
-        targetRequest.id,
-        `${targetRequest.supplierName} · Đã xác nhận hoàn tất giao hàng.`,
-        {
-          event: "delivery_confirmed",
-          supplierName: targetRequest.supplierName,
-          senderName: profile.displayName || user.displayName || user.email || "",
-        },
-        admin
-          ? { recipientRole: "supplier", recipientUid: targetRequest.ownerUid }
-          : {
-              recipientRole: "admin",
-            },
-      );
-      setNotice(`Đã xác nhận giao hàng cho ${targetRequest.supplierName}.`);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Không xác nhận được giao hàng.");
     } finally {
       setSaving(false);
     }
@@ -1059,20 +736,17 @@ function App() {
   };
 
   const openPage = (target: Page) => {
-    setPage(admin && target === "supplier" ? "admin" : target);
+    const nextTarget = admin && target === "supplier" ? "admin" : target;
+    setPage(nextTarget);
     setSelectedId(null);
     setHighlightTarget(null);
-    void recordActivity("page_opened", `Mở trang ${target}.`);
+    void recordActivity("page_opened", `Mở trang ${nextTarget}.`);
   };
 
   const openNotification = (notification: NotificationDocument) => {
     void markNotificationRead(notification.id);
-    if (notification.event === "delivery_date_requested" || notification.event === "delivery_date_response") {
-      openPage("deliveryDateRequests");
-      return;
-    }
     setPage(admin ? "admin" : "supplier");
-    openRequest(notification.requestId);
+    if (notification.requestId) openRequest(notification.requestId);
   };
 
   const openMentionedContent = (target: MentionTarget) => {
@@ -1095,32 +769,24 @@ function App() {
       <div className="layout">
         <aside className="sidebar">
           <p className="nav-label">KHÔNG GIAN LÀM VIỆC</p>
-          {!admin && <button className={`nav-item ${page === "supplier" ? "active" : ""}`} onClick={() => openPage("supplier")}>
+          {!admin && <button className={`nav-item ${effectivePage === "supplier" ? "active" : ""}`} onClick={() => openPage("supplier")}>
             <span className="nav-icon">↗</span> Đăng ký giao hàng
           </button>}
-          {admin && <button className={`nav-item ${page === "admin" ? "active" : ""}`} onClick={() => openPage("admin")}>
+          {admin && <button className={`nav-item ${effectivePage === "admin" ? "active" : ""}`} onClick={() => openPage("admin")}>
             <span className="nav-icon">▦</span> Quản trị tổng hợp
           </button>}
-          <button className={`nav-item ${page === "messages" ? "active" : ""}`} onClick={() => openPage("messages")}>
+          <button className={`nav-item ${effectivePage === "messages" ? "active" : ""}`} onClick={() => openPage("messages")}>
             <span className="nav-icon">✉</span> Tin nhắn
             {unreadMessageCount > 0 && <span className="count nav-count">{unreadMessageCount > 99 ? "99+" : unreadMessageCount}</span>}
           </button>
-          <button className={`nav-item ${page === "deliveryDateRequests" ? "active" : ""}`} onClick={() => openPage("deliveryDateRequests")}>
-            <span className="nav-icon">↔</span> Đổi ngày giao hàng
-            {!admin && requests.reduce((count, request) => count + request.deliveryDateRequests.filter((proposal) => proposal.status === "pending").length, 0) > 0 && (
-              <span className="count nav-count">
-                {requests.reduce((count, request) => count + request.deliveryDateRequests.filter((proposal) => proposal.status === "pending").length, 0)}
-              </span>
-            )}
-          </button>
-          <button className={`nav-item ${page === "notifications" ? "active" : ""}`} onClick={() => openPage("notifications")}>
+          <button className={`nav-item ${effectivePage === "notifications" ? "active" : ""}`} onClick={() => openPage("notifications")}>
             <span className="nav-icon">♧</span> Thông báo
             {unreadNotificationCount > 0 && <span className="count nav-count">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}
           </button>
-          {developer && <button className={`nav-item ${page === "deepAdmin" ? "active" : ""}`} onClick={() => openPage("deepAdmin")}>
+          {developer && <button className={`nav-item ${effectivePage === "deepAdmin" ? "active" : ""}`} onClick={() => openPage("deepAdmin")}>
             <span className="nav-icon">⌘</span> Deep Admin
           </button>}
-          <button className={`nav-item ${page === "profile" ? "active" : ""}`} onClick={() => openPage("profile")}>
+          <button className={`nav-item ${effectivePage === "profile" ? "active" : ""}`} onClick={() => openPage("profile")}>
             <span className="nav-icon">◎</span> Hồ sơ của tôi
           </button>
           <div className="sidebar-bottom">
@@ -1148,7 +814,7 @@ function App() {
           {error && <div key={`error-${error}`} className="alert error toast" role="alert"><span>{error}</span><button aria-label="Đóng thông báo lỗi" onClick={() => setError("")}>×</button><span className="toast-progress" aria-hidden="true" /></div>}
           {notice && <div key={`notice-${notice}`} className="alert success toast" role="status"><span>{notice}</span><button aria-label="Đóng thông báo" onClick={() => setNotice("")}>×</button><span className="toast-progress" aria-hidden="true" /></div>}
         </div>
-        <main className={`main-content ${admin && page === "admin" ? "admin-main-content" : ""}`}>
+        <main className={`main-content ${admin && effectivePage === "admin" ? "admin-main-content" : ""}`}>
 
           <ChatWidget
             user={user}
@@ -1158,8 +824,8 @@ function App() {
             onOpenMention={openMentionedContent}
             onUnreadCountChange={setUnreadMessageCount}
             onOpenMessages={openMessagesPage}
-            active={page === "messages"}
-            hidden={page !== "messages"}
+            active={effectivePage === "messages"}
+            hidden={effectivePage !== "messages"}
             supplierDisplayName={
               supplierName.trim()
               || profile.organization
@@ -1167,36 +833,65 @@ function App() {
               || "Nhà cung cấp"
             }
           />
-          {page !== "messages" && (page === "deliveryDateRequests" ? (
-            <DeliveryDateRequestsPage
-              requests={requests.filter((request) => !request.deleted)}
-              admin={admin}
-              currentUserUid={user.uid}
-              saving={saving}
-              onSubmit={(selection) => void handleRequestDeliveryDateChanges(selection)}
-              onRespond={(requestId, proposalId, accept) => void handleRespondToDeliveryDateChange(proposalId, accept, requestId)}
-              onOpenRequest={(requestId) => {
-                setPage(admin ? "admin" : "supplier");
-                openRequest(requestId);
-              }}
-            />
-          ) : page === "notifications" ? (
+          {effectivePage !== "messages" && (effectivePage === "notifications" ? (
             <section className="notifications-page">
               <div className="page-heading">
                 <div><p className="eyebrow">CẬP NHẬT</p><h1>Thông báo</h1><p className="muted">Toàn bộ thông báo mới nhất của bạn.</p></div>
-                <span className="count">{unreadNotificationCount} chưa đọc</span>
+                <div className="notification-heading-actions">
+                  <span className="count-badge unread-badge" title={`${unreadNotificationCount} thông báo chưa đọc`}>● {unreadNotificationCount} chưa đọc</span>
+                  <button
+                    className="button secondary mark-all-read-btn"
+                    onClick={() => void markAllNotificationsRead()}
+                    disabled={markingAllRead || unreadNotificationCount === 0}
+                  >
+                    {markingAllRead ? "Đang xử lý…" : "✓ Đánh dấu tất cả đã đọc"}
+                  </button>
+                </div>
+              </div>
+              <div className="notification-filter-tabs" role="tablist">
+                <button
+                  className={notificationFilter === "all" ? "active" : ""}
+                  onClick={() => { setNotificationFilter("all"); setNotificationPage(0); }}
+                >
+                  Tất cả <span>({visibleNotifications.length})</span>
+                </button>
+                <button
+                  className={notificationFilter === "unread" ? "active" : ""}
+                  onClick={() => { setNotificationFilter("unread"); setNotificationPage(0); }}
+                >
+                  Chưa đọc <span>({unreadNotificationCount})</span>
+                </button>
               </div>
               <div className="panel notification-list">
-                {visibleNotifications.length === 0 ? <p className="muted small">Chưa có thông báo.</p> : visibleNotifications.slice(notificationPage * 20, (notificationPage + 1) * 20).map((notification) => (
-                  <div key={notification.id} className="notification-row">
+                {filteredNotifications.length === 0 ? (
+                  <div className="notification-empty-state">
+                    <span className="empty-icon-large">✓</span>
+                    <strong>{notificationFilter === "unread" ? "Không còn thông báo chưa đọc" : "Chưa có thông báo"}</strong>
+                    <p className="muted small">{notificationFilter === "unread" ? "Bạn đã đọc hết tất cả thông báo." : "Thông báo sẽ xuất hiện ở đây khi có hoạt động mới."}</p>
+                  </div>
+                ) : filteredNotifications.slice(notificationPage * 20, (notificationPage + 1) * 20).map((notification) => (
+                  <div key={notification.id} className="notification-row" style={{ animation: "notif-fade-in .25s ease" }}>
                     <button
                       className={`notification-item ${readNotificationIds.has(notification.id) ? "read" : "unread"}`}
                       onClick={() => {
                         openNotification(notification);
                       }}
                     >
-                      {!readNotificationIds.has(notification.id) && <span className="notification-dot" />}
-                      <span>{notification.text}<small>{formatDate(notification.createdAt)}</small></span>
+                      <span className={`notif-avatar ${notification.event === "request_status" ? "status-bg" : notification.event === "request_submitted" ? "submit-bg" : "update-bg"}`}>
+                        {notification.event === "request_submitted" ? "📤" : notification.event === "request_status" ? "📋" : "✏️"}
+                      </span>
+                      <div className="notif-content">
+                        <span className="notif-title">
+                          {notification.event === "request_submitted"
+                            ? "Phiếu đăng ký mới"
+                            : notification.event === "request_status"
+                              ? "Trạng thái phiếu thay đổi"
+                              : "Cập nhật phiếu"}
+                        </span>
+                        <span className="notif-text">{notification.text}</span>
+                        <small>{formatDate(notification.createdAt)}</small>
+                      </div>
+                      {!readNotificationIds.has(notification.id) && <span className="notification-dot" aria-label="Chưa đọc" />}
                     </button>
                     <NotificationActions
                       open={openNotificationMenuId === notification.id}
@@ -1206,18 +901,18 @@ function App() {
                   </div>
                 ))}
               </div>
-              <Pagination page={notificationPage} pageSize={20} total={visibleNotifications.length} onPageChange={setNotificationPage} />
+              <Pagination page={notificationPage} pageSize={20} total={filteredNotifications.length} onPageChange={setNotificationPage} />
             </section>
-          ) : page === "deepAdmin" && developer ? (
+          ) : effectivePage === "deepAdmin" && developer ? (
             <DeepAdminPage currentUserUid={user.uid} />
-          ) : page === "profile" ? (
+          ) : effectivePage === "profile" ? (
             <ProfilePage
               user={user}
               profile={profile}
               saving={saving}
               onSave={(nextProfile) => void handleProfileSave(nextProfile)}
             />
-          ) : (page === "admin" || page === "supplier") && admin ? (
+          ) : (effectivePage === "admin" || effectivePage === "supplier") && admin ? (
             <>
               <div className={selected ? "admin-list-hidden" : ""} aria-hidden={!!selected}>
                 <AdminPage
@@ -1227,8 +922,6 @@ function App() {
                   focusRequestId={highlightTarget?.requestId ?? null}
                   onSelect={openRequest}
                   onStatusChange={(id, status) => handleStatusChange(status, id)}
-                  onDeliveryReminder={(id) => handleDeliveryReminder(id)}
-                  onDeliveryConfirmation={(id) => handleDeliveryConfirmation(id)}
                   onExport={(exported, mode) => {
                     void recordActivity(
                       "spreadsheet_exported",
@@ -1241,7 +934,7 @@ function App() {
               {selected && <div className="admin-detail-wrap">
                 <div className="admin-detail-tabbar">
                   <button className="button secondary" onClick={() => { setSelectedId(null); setHighlightTarget(null); }}>← Danh sách phiếu</button>
-                  <span>Ngày giao: {selected.deliveryDate || "Chưa xác định"} <b>›</b> {selected.supplierName} <b>›</b> Chi tiết phiếu</span>
+                  <span>{selected.supplierName} <b>›</b> Chi tiết phiếu</span>
                 </div>
                 <RequestDetail
                 request={selected}
@@ -1263,8 +956,6 @@ function App() {
                 onIntroductionFile={handleIntroductionFile}
                 onSave={() => void handleSaveEdit()}
                 onStatus={(status) => void handleStatusChange(status)}
-                onDeliveryReminder={() => void handleDeliveryReminder()}
-                onDeliveryConfirmation={() => void handleDeliveryConfirmation()}
                 onDelete={() => void handleDelete()}
               /></div>}
             </>
@@ -1291,8 +982,6 @@ function App() {
                   onIntroductionFile={handleIntroductionFile}
                   onSave={() => void handleSaveEdit()}
                   onStatus={(status) => void handleStatusChange(status)}
-                  onDeliveryReminder={() => void handleDeliveryReminder()}
-                  onDeliveryConfirmation={() => void handleDeliveryConfirmation()}
                   onDelete={() => void handleDelete()}
                 /> : <SupplierRegistrationForm
                   supplierName={supplierName}
@@ -1312,14 +1001,9 @@ function App() {
               <aside className="secondary-column">
                 <div className="side-heading"><div><p className="eyebrow">THEO DÕI</p><h2>Phiếu của tôi</h2></div><span className="count">{supplierRequests.length}</span></div>
                 {supplierRequests.length === 0 ? <div className="empty-card"><span className="empty-icon">▤</span><strong>Chưa có phiếu giao hàng</strong><p>Phiếu đã gửi sẽ xuất hiện ở đây để bạn theo dõi và chỉnh sửa.</p></div> : displayedSupplierRequests.map((request) => {
-                  const days = daysUntilDelivery(request.deliveryDate);
                   return <button key={request.id} className={`request-card ${selectedId === request.id ? "selected" : ""}`} onClick={() => openRequest(request.id)}>
                     <div className="request-card-top"><span className={`status status-${request.status}`}>{statusLabels[request.status]}</span><span className="muted tiny">{formatDate(request.createdAt)}</span></div>
                     <strong>{request.supplierName}</strong>
-                    <span className="muted small">Kế hoạch từ {request.deliveryDate}</span>
-                    <span className={`delivery-countdown delivery-${deliveryTone(request.deliveryDate, request.status)}`}>
-                      {request.status === "delivered" ? "Đã hoàn tất giao hàng" : deliveryCountdownLabel(days)}
-                    </span>
                     <span className="muted small">{request.items.length} dòng hàng hóa</span>
                     {request.revisions.length > 0 && <span className="revision-note">{request.revisions.length} lần cập nhật</span>}
                   </button>;

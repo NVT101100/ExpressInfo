@@ -1,7 +1,6 @@
 import { EXCEL_TEMPLATE } from "../config";
 import type {
   DeliveryItem,
-  DeliveryDateRequest,
   DeliveryRequest,
   RequestDocument,
   RequestStatus,
@@ -12,9 +11,6 @@ export const statusLabels: Record<RequestStatus, string> = {
   pending: "Chờ duyệt",
   approved: "Đã duyệt",
   rejected: "Từ chối",
-  reminded: "Đã nhắc giao",
-  overdue: "Trễ giao",
-  delivered: "Đã giao hàng",
 };
 
 export function formatDate(value?: number | null) {
@@ -25,95 +21,13 @@ export function formatDate(value?: number | null) {
   }).format(new Date(value));
 }
 
-export function daysUntilDelivery(deliveryDate: string, now = new Date()) {
-  const [year, month, day] = deliveryDate.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  const deliveryDay = new Date(year, month - 1, day);
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  return Math.round((deliveryDay.getTime() - today.getTime()) / 86_400_000);
-}
-
-export function deliveryCountdownLabel(days: number | null) {
-  if (days === null) return "Chưa có ngày giao";
-  if (days < 0) return `Trễ ${Math.abs(days)} ngày`;
-  if (days === 0) return "Giao hôm nay";
-  if (days === 1) return "Còn 1 ngày";
-  return `Còn ${days} ngày`;
-}
-
-export function deliveryTone(
-  deliveryDate: string,
-  status: RequestStatus,
-  now = new Date(),
-) {
-  if (status === "delivered") return "delivered";
-  const days = daysUntilDelivery(deliveryDate, now);
-  if (days !== null && days < 0 && ["approved", "reminded", "overdue"].includes(status)) return "overdue";
-  if (days === 0) return "today";
-  if (days !== null && days > 0 && days <= 2) return "soon";
-  return "upcoming";
-}
-
-function isValidIsoDate(value: string) {
-  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return false;
-  const [, yearText, monthText, dayText] = match;
-  const date = new Date(Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText)));
-  return date.getUTCFullYear() === Number(yearText)
-    && date.getUTCMonth() === Number(monthText) - 1
-    && date.getUTCDate() === Number(dayText);
-}
-
-function isoDateFromDate(date: Date) {
-  if (Number.isNaN(date.getTime())) return "";
-  const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
-  if (Number.isNaN(localDate.getTime())) return "";
-  return localDate.toISOString().slice(0, 10);
-}
-
-function isoDateFromExcelSerial(serial: number) {
-  const date = new Date(Date.UTC(1899, 11, 30) + Math.floor(serial) * 86_400_000);
-  if (Number.isNaN(date.getTime())) return "";
-  const isoDate = date.toISOString().slice(0, 10);
-  return isValidIsoDate(isoDate) ? isoDate : "";
-}
-
-function normalizeDeliveryDate(value: unknown, displayValue: string) {
-  if (value instanceof Date) return isoDateFromDate(value);
-  if (typeof value === "number" && Number.isFinite(value)) {
-    if (Number.isInteger(value) && value >= 10_000_000 && value <= 99_999_999) {
-      const compactDate = String(value);
-      const isoDate = `${compactDate.slice(0, 4)}-${compactDate.slice(4, 6)}-${compactDate.slice(6, 8)}`;
-      return isValidIsoDate(isoDate) ? isoDate : "";
-    }
-    if (value >= 100_000_000_000) return isoDateFromDate(new Date(value));
-    if (value >= 1_000_000_000) return isoDateFromDate(new Date(value * 1_000));
-    return isoDateFromExcelSerial(value);
-  }
-
-  const raw = displayValue.trim();
-  const compactDate = raw.match(/^(\d{4})(\d{2})(\d{2})$/);
-  if (compactDate) {
-    const isoDate = `${compactDate[1]}-${compactDate[2]}-${compactDate[3]}`;
-    return isValidIsoDate(isoDate) ? isoDate : "";
-  }
-  const isoDate = raw.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/);
-  if (isoDate) {
-    const normalized = `${isoDate[1]}-${isoDate[2].padStart(2, "0")}-${isoDate[3].padStart(2, "0")}`;
-    return isValidIsoDate(normalized) ? normalized : "";
-  }
-  const dayFirstDate = raw.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/);
-  if (dayFirstDate) {
-    const normalized = `${dayFirstDate[3]}-${dayFirstDate[2].padStart(2, "0")}-${dayFirstDate[1].padStart(2, "0")}`;
-    return isValidIsoDate(normalized) ? normalized : "";
-  }
-  if (/^\d+$/.test(raw)) {
-    const numericValue = Number(raw);
-    if (Number.isSafeInteger(numericValue)) {
-      return normalizeDeliveryDate(numericValue, "");
-    }
-  }
-  return "";
+export function formatSubmitDateKey(value: number) {
+  const date = new Date(value);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
 }
 
 export function requestFromSnapshot(
@@ -122,15 +36,11 @@ export function requestFromSnapshot(
 ): DeliveryRequest {
   const original = value as unknown as RequestDocument & {
     revisions?: Record<string, Omit<RevisionDocument, "id">>;
-    deliveryDateRequests?: Record<string, Omit<DeliveryDateRequest, "id">>;
   };
   const legacyDelivery = original.deliveryAt?.split("T") ?? ["", ""];
   const revisions = Object.entries(original.revisions ?? {})
     .map(([revisionId, revision]) => ({ ...revision, id: revisionId }))
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
-  const deliveryDateRequests = Object.entries(original.deliveryDateRequests ?? {})
-    .map(([proposalId, proposal]) => ({ ...proposal, id: proposalId }))
-    .sort((a, b) => b.createdAt - a.createdAt || b.id.localeCompare(a.id));
   const effective: DeliveryRequest = {
     ...original,
     supplierName: original.supplierName || original.ownerName,
@@ -138,7 +48,6 @@ export function requestFromSnapshot(
     deliveryDate: original.deliveryDate || legacyDelivery[0] || "",
     id,
     revisions,
-    deliveryDateRequests,
     status: "pending",
     deleted: false,
   };
@@ -219,9 +128,8 @@ export async function parseSpreadsheet(file: File): Promise<DeliveryItem[]> {
       EXCEL_TEMPLATE.columns.map((column, index) => {
         if (columnIndexes[index] < 0) return [column.key, ""];
         const cell = row.getCell(columnIndexes[index] + 1);
-        const value = cell.value;
         if (column.key === "expectedDeliveryDate") {
-          return [column.key, normalizeDeliveryDate(value, cell.text)];
+          return [column.key, cell.text.trim()];
         }
         return [column.key, cell.text.trim()];
       }),
@@ -229,9 +137,6 @@ export async function parseSpreadsheet(file: File): Promise<DeliveryItem[]> {
     if (Object.values(item).some(Boolean)) items.push(item);
   });
   if (items.length === 0) throw new Error("File Excel không có dòng hàng hóa.");
-  if (items.some((item) => !isValidIsoDate(item.expectedDeliveryDate ?? ""))) {
-    throw new Error("Cột “Ngày giao dự kiến” phải có ngày hợp lệ ở tất cả các dòng.");
-  }
   if (items.length > EXCEL_TEMPLATE.maxRows) {
     throw new Error(`Tối đa ${EXCEL_TEMPLATE.maxRows} dòng hàng hóa.`);
   }
@@ -245,11 +150,10 @@ export async function exportRequests(requests: DeliveryRequest[]) {
       "Nhà cung cấp": request.supplierName,
       "Nhóm hàng hóa": request.deliveryGroup ?? "",
       Email: request.ownerEmail,
-      "Ngày giao": request.deliveryDate,
-      "Trạng thái": statusLabels[request.status],
       "Ngày gửi": request.createdAt
         ? new Date(request.createdAt).toLocaleString("vi-VN")
         : "",
+      "Trạng thái": statusLabels[request.status],
       "File kế hoạch": request.attachments?.deliveryPlan?.url ?? "",
       "Giấy giới thiệu": request.attachments?.companyIntroduction?.url ?? "",
       ...Object.fromEntries(
@@ -266,9 +170,8 @@ export async function exportRequests(requests: DeliveryRequest[]) {
     "Nhà cung cấp",
     "Nhóm hàng hóa",
     "Email",
-    "Ngày giao",
-    "Trạng thái",
     "Ngày gửi",
+    "Trạng thái",
     "File kế hoạch",
     "Giấy giới thiệu",
     ...EXCEL_TEMPLATE.columns.map((column) => column.label),

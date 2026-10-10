@@ -1,5 +1,5 @@
 export type DeliveryItem = Record<string, string>;
-export type RequestStatus = "pending" | "approved" | "rejected" | "reminded" | "overdue" | "delivered";
+export type RequestStatus = "pending" | "approved" | "rejected";
 export interface ItemFieldChange {
   index: number;
   key: string;
@@ -35,7 +35,7 @@ export interface RequestDocument {
   ownerName: string;
   supplierName: string;
   deliveryGroup?: string;
-  deliveryDate: string;
+  deliveryDate?: string;
   deliveryTime?: string;
   recipientEmail?: string;
   notes?: string;
@@ -59,30 +59,8 @@ export interface RevisionDocument {
 export interface DeliveryRequest extends RequestDocument {
   id: string;
   revisions: RevisionDocument[];
-  deliveryDateRequests: DeliveryDateRequest[];
   status: RequestStatus;
   deleted: boolean;
-}
-
-export interface DeliveryDateRequest {
-  id: string;
-  itemIndex: number;
-  itemName: string;
-  itemSku: string;
-  currentDate: string;
-  requestedDate: string;
-  status: "pending" | "accepted" | "rejected";
-  createdAt: number;
-  createdByUid: string;
-  createdByEmail: string;
-  responseAt?: number;
-  responseByUid?: string;
-}
-
-export interface DeliveryDateChangeSelection {
-  requestId: string;
-  itemIndex: number;
-  requestedDate: string;
 }
 
 export interface NotificationDocument {
@@ -93,7 +71,7 @@ export interface NotificationDocument {
   supplierName?: string;
   recipientRole?: "admin" | "supplier";
   recipientUid?: string | null;
-  event?: "request_submitted" | "request_status" | "request_updated" | "delivery_reminder" | "delivery_overdue" | "delivery_confirmed" | "delivery_date_requested" | "delivery_date_response";
+  event?: "request_submitted" | "request_status" | "request_updated";
   text: string;
   createdAt: number;
 }

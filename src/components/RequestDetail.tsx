@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "../config";
-import { daysUntilDelivery, deliveryCountdownLabel, deliveryTone, formatDate, statusLabels } from "../lib/delivery";
-import { buildHtmlEmail, copyHtmlEmailToClipboard, formatPlainTextItems } from "../lib/email";
+import { formatDate, statusLabels } from "../lib/delivery";
+import { buildGroupedSupplierEmail, copyHtmlEmailToClipboard, formatGroupedPlainEmail, type AttachmentLink } from "../lib/email";
 import type {
   DeliveryItem,
   DeliveryRequest,
@@ -34,8 +34,6 @@ interface RequestDetailProps {
   onIntroductionFile: (file?: File) => void;
   onSave: () => void;
   onStatus: (status: RequestStatus) => void;
-  onDeliveryReminder: () => void;
-  onDeliveryConfirmation: () => void;
   onDelete: () => void;
 }
 
@@ -59,8 +57,6 @@ export default function RequestDetail({
   onIntroductionFile,
   onSave,
   onStatus,
-  onDeliveryReminder,
-  onDeliveryConfirmation,
   onDelete,
 }: RequestDetailProps) {
   const disabled = request.deleted || saving;
@@ -113,30 +109,44 @@ export default function RequestDetail({
   const emailRows = items
     .map((item, index) => ({ item, index }))
     .filter(({ index }) => selectedEmailRows.has(index));
-  const emailSubject = `Kế hoạch giao hàng - ${request.supplierName} - ${request.deliveryDate}`;
-  const emailBody = [
+  const emailSubject = `Danh sách dự kiến giao hàng - ${request.supplierName}`;
+
+  const attachmentList: AttachmentLink[] = [];
+  if (request.attachments?.deliveryPlan) attachmentList.push(request.attachments.deliveryPlan);
+  if (request.attachments?.companyIntroduction) attachmentList.push(request.attachments.companyIntroduction);
+
+  const emailParagraphs = [
     "Kính gửi bộ phận nhận hàng,",
     "",
-    "Nhà cung cấp xin thông báo kế hoạch giao hàng với thông tin sau:",
-    `Nhà cung cấp: ${request.supplierName}`,
-    `Ngày giao: ${request.deliveryDate}`,
-    "",
-    "Danh sách hàng hóa:",
-    formatPlainTextItems(
-      EXCEL_TEMPLATE.columns.map((column) => column.label),
-      emailRows.map(({ item }) => EXCEL_TEMPLATE.columns.map((column) => item[column.key] ?? "")),
-    ),
-    "",
-    "Trân trọng.",
-  ].join("\r\n");
-  const emailHtml = buildHtmlEmail([
-    "Kính gửi bộ phận nhận hàng,",
-    "Nhà cung cấp xin thông báo kế hoạch giao hàng với thông tin sau:",
-    `Nhà cung cấp: ${request.supplierName} · Ngày giao: ${request.deliveryDate}`,
-    "Danh sách hàng hóa:",
-    "Trân trọng.",
-  ], EXCEL_TEMPLATE.columns.map((column) => column.label),
-  emailRows.map(({ item }) => EXCEL_TEMPLATE.columns.map((column) => item[column.key] ?? "")));
+    `Dưới đây là danh sách hàng hóa dự kiến giao hàng từ nhà cung cấp ${request.supplierName}.`,
+    `Trạng thái phiếu: ${statusLabels[request.status]} · Giờ gửi: ${formatDate(request.createdAt)}.`,
+    "Chi tiết hàng hóa:",
+  ];
+
+  const emailBody = formatGroupedPlainEmail(
+    emailParagraphs,
+    EXCEL_TEMPLATE.columns.map((column) => column.label),
+    [
+      {
+        supplierName: request.supplierName,
+        submitInfo: `${statusLabels[request.status]} · Người gửi: ${request.ownerEmail}`,
+        rows: emailRows.map(({ item }) => EXCEL_TEMPLATE.columns.map((column) => item[column.key] ?? "")),
+        attachments: attachmentList,
+      },
+    ],
+  );
+  const emailHtml = buildGroupedSupplierEmail(
+    emailParagraphs,
+    EXCEL_TEMPLATE.columns.map((column) => column.label),
+    [
+      {
+        supplierName: request.supplierName,
+        submitInfo: `${statusLabels[request.status]} · Người gửi: ${request.ownerEmail} · Gửi ${formatDate(request.createdAt)}`,
+        rows: emailRows.map(({ item }) => EXCEL_TEMPLATE.columns.map((column) => item[column.key] ?? "")),
+        attachments: attachmentList,
+      },
+    ],
+  );
   const validReceiverEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(receiverEmail.trim());
   const encodeQueryValue = (value: string) => encodeURIComponent(value)
     .replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
@@ -154,7 +164,6 @@ export default function RequestDetail({
       setEmailCopyMessage(cause instanceof Error ? cause.message : "Không sao chép được nội dung email.");
     }
   }
-  const deliveryDays = daysUntilDelivery(request.deliveryDate);
 
   return (
     <div className="detail-page">
@@ -167,9 +176,6 @@ export default function RequestDetail({
         </div>
         <div className="detail-status-stack">
           <span className={`status status-${request.status}`}>{statusLabels[request.status]}</span>
-          <span className={`delivery-countdown delivery-${deliveryTone(request.deliveryDate, request.status)}`}>
-            {request.status === "delivered" ? "Đã hoàn tất giao hàng" : deliveryCountdownLabel(deliveryDays)}
-          </span>
         </div>
       </div>
       <div className="panel detail-panel">
@@ -186,16 +192,6 @@ export default function RequestDetail({
             <span className="field-label">Nhóm hàng hóa</span>
             <input className="text-input" value={request.deliveryGroup || DELIVERY_GROUP} readOnly />
           </label>
-          {!admin && <label className="field">
-            <span className="field-label">Ngày giao dự kiến đầu tiên</span>
-            <input id="request-field-deliveryDate" className="text-input" type="date" value={deliveryDate} readOnly />
-          </label>}
-          {admin && <>
-            <label className="field">
-              <span className="field-label">Ngày giao hàng đầu tiên trong kế hoạch</span>
-              <input id="request-field-deliveryDate" className="text-input" type="date" value={deliveryDate} onChange={(event) => onDeliveryDate(event.target.value)} disabled={disabled} required />
-            </label>
-          </>}
         </div>
         <section className="request-attachments">
           <strong>File đính kèm</strong>
@@ -241,7 +237,7 @@ export default function RequestDetail({
             <div className="section-title">
               <span className="step">✉</span>
               <div>
-                <h2>Soạn email cho bên nhận hàng</h2>
+                <h2>Soạn email danh sách dự kiến giao hàng</h2>
                 <p>Mở Outlook bằng liên kết soạn thư, rồi bấm “Sao chép email” và dán vào nội dung thư để giữ bảng có định dạng. Cần đăng nhập Outlook; kiểm tra nội dung trước khi gửi.</p>
               </div>
             </div>
@@ -328,21 +324,20 @@ export default function RequestDetail({
           <div className="detail-actions">
             <button className="button primary" disabled={saving} onClick={onSave}>{saving ? "Đang lưu…" : "Lưu thay đổi"}</button>
             {admin && <>
-              <select className="text-input status-select" value={request.status} disabled={saving || request.status === "reminded" || request.status === "overdue" || request.status === "delivered"} onChange={(event) => onStatus(event.target.value as RequestStatus)}>
-                <option value="pending">Chờ duyệt</option><option value="approved">Đã duyệt</option><option value="rejected">Từ chối</option>
-                <option value="reminded">Đã nhắc giao</option><option value="overdue" disabled>Trễ giao (tự động)</option><option value="delivered">Đã giao hàng</option>
-              </select>
-              {["approved", "reminded", "overdue"].includes(request.status) && (
-                <button className="button secondary" disabled={saving} onClick={onDeliveryReminder}>Nhắc giao hàng</button>
+              {request.status === "pending" && (
+                <>
+                  <button type="button" className="button row-action approve" disabled={saving} onClick={() => onStatus("approved")}>Duyệt</button>
+                  <button type="button" className="button row-action reject" disabled={saving} onClick={() => onStatus("rejected")}>Từ chối</button>
+                </>
               )}
-              {["approved", "reminded", "overdue"].includes(request.status) && (
-                <button className="button secondary" disabled={saving} onClick={onDeliveryConfirmation}>Xác nhận đã giao</button>
+              {request.status === "approved" && (
+                <span className="button row-action confirm disabled-button">Đã duyệt</span>
+              )}
+              {request.status === "rejected" && (
+                <span className="button row-action reject disabled-button">Đã từ chối</span>
               )}
               <button className="button danger" disabled={saving} onClick={onDelete}>Xóa mềm</button>
             </>}
-            {!admin && ["approved", "reminded", "overdue"].includes(request.status) && (
-              <button className="button secondary" disabled={saving} onClick={onDeliveryConfirmation}>Xác nhận đã giao hàng</button>
-            )}
           </div>
         )}
       </div>
