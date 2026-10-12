@@ -485,6 +485,68 @@ code { color: var(--green); background: #eff6f1; padding: 2px 4px; border-radius
 .role-alert { margin: 0 21px 14px; }
 .role-select { min-width: 130px; }
 .role-uid { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+.database-cleanup-panel { margin-bottom: 16px; }
+.database-cleanup-heading-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.database-table-list { padding: 0 21px 18px; }
+.database-list-summary { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 2px 10px; color: #a8c5bd; font-size: 11px; }
+.database-list-summary strong { color: #f3f7f5; }
+.database-selected-count { padding: 5px 9px; border: 1px solid rgba(156, 214, 200, .18); border-radius: 20px; color: #c5d9d3; background: rgba(255,255,255,.035); font-size: 10px; font-weight: 700; }
+.database-table-scroll { max-height: 350px; overflow: auto; border: 1px solid rgba(156, 214, 200, .16); border-radius: 12px; background: rgba(7, 25, 27, .28); }
+.database-cleanup-table { min-width: 620px; }
+.database-cleanup-table thead { position: sticky; top: 0; z-index: 1; background: #193b3c; }
+.database-cleanup-table th { padding: 11px 14px; border-bottom: 1px solid rgba(156, 214, 200, .16); color: #a9c6be; font-size: 9px; letter-spacing: .7px; }
+.database-cleanup-table td { padding: 12px 14px; border-bottom: 1px solid rgba(156, 214, 200, .1); color: #d8e6e1; font-size: 11px; white-space: normal; }
+.database-cleanup-table tbody tr { cursor: default; background: rgba(255,255,255,.012); }
+.database-cleanup-table tbody tr:hover { background: rgba(156, 214, 200, .06); }
+.database-cleanup-table tbody tr.database-row-selected { background: rgba(108, 188, 146, .1); }
+.database-cleanup-table tbody tr:last-child td { border-bottom: 0; }
+.database-cleanup-table .database-select-column { width: 64px; text-align: center; }
+.database-cleanup-table .database-number-column { width: 125px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.database-cleanup-table .database-state-column { width: 120px; text-align: right; white-space: nowrap; }
+.database-cleanup-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: #69bd91; cursor: pointer; }
+.database-cleanup-table input[type="checkbox"]:disabled { cursor: wait; }
+.database-branch-name { display: flex; align-items: center; gap: 8px; }
+.database-branch-name > span { color: #8bd0ad; font-size: 15px; }
+.database-branch-name strong { color: #f0f5f3; font-size: 12px; }
+.database-branch-description { display: block; margin: 4px 0 0 23px; color: #8da9a1; font-size: 10px; }
+.database-selection-badge { display: inline-flex; padding: 4px 8px; border: 1px solid rgba(156, 214, 200, .14); border-radius: 20px; color: #a5bcb5; background: rgba(255,255,255,.035); font-size: 9px; font-weight: 700; }
+.database-selection-badge.selected { border-color: rgba(120, 207, 159, .28); color: #a7e1bd; background: rgba(76, 161, 111, .14); }
+.database-empty-state { display: flex; min-height: 100px; align-items: center; justify-content: center; gap: 12px; border: 1px dashed rgba(156, 214, 200, .2); border-radius: 12px; color: #a8c5bd; font-size: 11px; text-align: left; }
+.database-empty-state > span:last-child { display: grid; gap: 4px; }
+.database-empty-state strong { color: #e3eee9; font-size: 12px; }
+.database-empty-state small { color: #91aaa2; font-size: 10px; }
+.database-empty-icon { display: grid; width: 32px; height: 32px; place-items: center; border-radius: 50%; color: #91d2aa; background: rgba(91, 174, 121, .14); font-size: 16px; }
+.database-loading-mark { width: 14px; height: 14px; border: 2px solid rgba(156, 214, 200, .25); border-top-color: #8bd0ad; border-radius: 50%; animation: database-spin .8s linear infinite; }
+@keyframes database-spin { to { transform: rotate(360deg); } }
+.database-cleanup-confirm { display: grid; gap: 12px; margin-top: 14px; padding: 15px; border: 1px solid rgba(240, 196, 93, .22); border-radius: 12px; background: rgba(240, 196, 93, .055); }
+.database-cleanup-confirm > p { margin: 0; color: #c2d3cd; font-size: 11px; line-height: 1.5; }
+.database-cleanup-confirm > p strong { color: #f5d98f; }
+.database-cleanup-actions { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.database-backup-ack { display: flex; align-items: center; gap: 7px; min-height: 38px; color: #c2d3cd; font-size: 10px; }
+.database-backup-ack input { accent-color: #69bd91; }
+.database-delete-confirm-field { display: grid; gap: 5px; min-width: 210px; color: #a8c5bd; font-size: 10px; }
+.database-delete-confirm-field strong { color: #f2d28a; letter-spacing: .5px; }
+.database-delete-confirm-field .text-input { min-height: 38px; }
+.database-delete-button { min-height: 38px; border: 1px solid rgba(255, 126, 119, .38); border-radius: 8px; padding: 8px 12px; color: #ffe5e2; background: rgba(175, 62, 57, .75); font-size: 10px; font-weight: 750; }
+.database-delete-button:hover:not(:disabled) { background: #a93e39; }
+.database-delete-button:disabled { opacity: .45; cursor: not-allowed; }
+.drive-file-manager { margin-bottom: 16px; }
+.drive-manager-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; }
+.drive-file-manager .search-input { min-width: 220px; }
+.drive-file-table-wrap { max-height: 480px; overflow: auto; }
+.drive-file-table-wrap table { min-width: 860px; }
+.drive-file-table-wrap thead { position: sticky; top: 0; z-index: 1; background: #193b3c; }
+.drive-file-table-wrap th { color: #a9c6be; background: #193b3c; }
+.drive-file-table-wrap td { color: #d8e6e1; border-bottom-color: rgba(156, 214, 200, .1); }
+.drive-file-table-wrap tbody tr { cursor: default; background: rgba(255,255,255,.012); }
+.drive-file-table-wrap tbody tr:hover { background: rgba(156, 214, 200, .06); }
+.drive-file-name { min-width: 230px; }
+.drive-file-name strong { max-width: 360px; overflow-wrap: anywhere; color: #f0f5f3; }
+.drive-file-name small { display: block; max-width: 360px; margin-top: 4px; overflow-wrap: anywhere; color: #8da9a1; font-size: 9px; }
+.drive-file-path { max-width: 250px; overflow-wrap: anywhere; color: #a9c6be !important; }
+.drive-file-actions { display: flex; align-items: center; gap: 6px; }
+.drive-file-delete { min-height: auto; padding: 6px 8px; font-size: 10px; }
+.drive-file-count { margin: 0; padding: 0 21px 14px; color: #8da9a1; font-size: 10px; text-align: right; }
 .search-input { width: 230px; }
 .filter-select { width: 155px; background: #f8fcf9; color: #46564c; font-size: 11px; }
 table { width: 100%; border-collapse: collapse; text-align: left; }
@@ -674,6 +736,16 @@ td strong { color: #29392f; font-size: 11px; }
   .role-add-form { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 17px 17px; }
   .role-add-form .button, .role-lookup-result { grid-column: 1 / -1; }
   .role-alert { margin: 0 17px 14px; }
+  .database-cleanup-heading-actions, .drive-manager-actions { justify-content: flex-start; width: 100%; }
+  .database-cleanup-heading-actions .button, .drive-manager-actions .button { flex: 1 1 auto; }
+  .database-table-list { padding: 0 17px 17px; }
+  .database-cleanup-confirm { margin: 0 17px 17px; }
+  .database-cleanup-actions { align-items: stretch; flex-direction: column; }
+  .database-cleanup-actions > *, .database-delete-confirm-field { width: 100%; }
+  .database-backup-ack { min-height: 28px; }
+  .database-list-summary { align-items: flex-start; }
+  .drive-file-manager .search-input { width: 100%; min-width: 0; }
+  .drive-file-table-wrap { max-height: 380px; }
   .admin-page .filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .admin-form-entry { flex-wrap: wrap; gap: 8px; }
   .admin-row-actions { width: 100%; max-width: none; justify-content: flex-start; padding-left: 34px; }

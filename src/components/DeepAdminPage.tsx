@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { get, limitToLast, onValue, orderByChild, query, ref, remove, set, update } from "firebase/database";
 import { formatDate } from "../lib/delivery";
 import { db } from "../firebase";
+import type { User } from "firebase/auth";
 import type { ActivityLog } from "../types";
 import Pagination from "./Pagination";
 import { useConfirmation } from "./ConfirmationProvider";
+import DriveFileManager from "./DriveFileManager";
 
 const USER_PAGE_SIZE = 25;
 const LOG_PAGE_SIZE = 50;
@@ -25,6 +27,7 @@ interface DatabaseTable {
 
 interface DeepAdminPageProps {
   currentUserUid: string;
+  user: User;
 }
 
 function countDatabaseRecords(value: unknown): number {
@@ -60,7 +63,17 @@ const actionLabels: Record<ActivityLog["action"], string> = {
   signed_out: "Đăng xuất",
 };
 
-export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
+const databaseTableDescriptions: Record<string, string> = {
+  activityLogs: "Nhật ký thao tác trong cổng",
+  chats: "Tin nhắn và hội thoại",
+  notifications: "Thông báo người dùng",
+  profiles: "Hồ sơ và thông tin liên hệ",
+  requestReads: "Trạng thái đã xem phiếu",
+  requests: "Phiếu giao hàng và bình luận",
+  roles: "Phân quyền tài khoản",
+};
+
+export default function DeepAdminPage({ currentUserUid, user }: DeepAdminPageProps) {
   const confirm = useConfirmation();
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [managedUsers, setManagedUsers] = useState<Array<ManagedUser & { uid: string }>>([]);
@@ -524,20 +537,60 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
         )}
         <div className="database-table-list" aria-label="Các nhánh Realtime Database có dữ liệu">
           {databaseLoading ? (
-            <p className="empty-row">Đang tải các nhánh dữ liệu…</p>
+            <div className="database-empty-state"><span className="database-loading-mark" />Đang tải các nhánh dữ liệu…</div>
           ) : databaseTables.length === 0 ? (
-            <p className="empty-row">Realtime Database hiện không có nhánh nào chứa dữ liệu.</p>
-          ) : databaseTables.map((table) => (
-            <label className="database-table-option" key={table.name}>
-              <input
-                type="checkbox"
-                checked={selectedDatabaseTables.has(table.name)}
-                disabled={cleaningDatabase || creatingBackup}
-                onChange={() => toggleDatabaseTable(table.name)}
-              />
-              <span><strong>/{table.name}</strong><small>{table.childCount.toLocaleString("vi-VN")} mục cấp 1 · {table.recordCount.toLocaleString("vi-VN")} giá trị</small></span>
-            </label>
-          ))}
+            <div className="database-empty-state">
+              <span className="database-empty-icon" aria-hidden="true">✓</span>
+              <span><strong>Database đang trống</strong><small>Không có nhánh gốc nào chứa dữ liệu để dọn dẹp.</small></span>
+            </div>
+          ) : (
+            <>
+              <div className="database-list-summary">
+                <span><strong>{databaseTables.length}</strong> nhánh có dữ liệu</span>
+                <span className="database-selected-count">{selectedDatabaseTables.size} đang chọn</span>
+              </div>
+              <div className="database-table-scroll">
+                <table className="database-cleanup-table">
+                  <thead>
+                    <tr>
+                      <th className="database-select-column">Chọn</th>
+                      <th>Nhánh dữ liệu</th>
+                      <th className="database-number-column">Mục cấp 1</th>
+                      <th className="database-number-column">Tổng giá trị</th>
+                      <th className="database-state-column">Trạng thái</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {databaseTables.map((table) => {
+                      const selected = selectedDatabaseTables.has(table.name);
+                      return (
+                        <tr key={table.name} className={selected ? "database-row-selected" : ""}>
+                          <td className="database-select-column">
+                            <input
+                              type="checkbox"
+                              aria-label={`Chọn nhánh ${table.name}`}
+                              checked={selected}
+                              disabled={cleaningDatabase || creatingBackup}
+                              onChange={() => toggleDatabaseTable(table.name)}
+                            />
+                          </td>
+                          <td>
+                            <div className="database-branch-name"><span aria-hidden="true">▦</span><strong>/{table.name}</strong></div>
+                            <small className="database-branch-description">{databaseTableDescriptions[table.name] ?? "Nhánh gốc trong Realtime Database"}</small>
+                          </td>
+                          <td className="database-number-column">{table.childCount.toLocaleString("vi-VN")}</td>
+                          <td className="database-number-column">{table.recordCount.toLocaleString("vi-VN")}</td>
+                          <td className="database-state-column">
+                            <span className={`database-selection-badge ${selected ? "selected" : ""}`}>{selected ? "Đã chọn" : "Sẵn sàng"}</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
         {selectedDatabaseTables.size > 0 && (
           <div className="database-cleanup-confirm">
@@ -585,6 +638,7 @@ export default function DeepAdminPage({ currentUserUid }: DeepAdminPageProps) {
           </div>
         )}
       </div>
+      <DriveFileManager user={user} />
       <div className="panel table-panel">
         <div className="toolbar">
           <div><h2>Hoạt động ứng dụng</h2><p className="muted small">{filteredLogs.length} log · lưu trong Realtime Database</p></div>

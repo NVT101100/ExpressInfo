@@ -38,6 +38,7 @@ import { logActivity } from "./lib/activity";
 import {
   cacheDriveAccessToken,
   createGoogleDriveProvider,
+  getSubmissionDriveFolder,
   getDriveAccessToken,
   uploadToDeliveryDrive,
 } from "./lib/googleDrive";
@@ -486,9 +487,11 @@ function App() {
     setError("");
     try {
       const accessToken = await getDriveAccessToken(user);
+      const submittedAt = Date.now();
+      const folderId = await getSubmissionDriveFolder(accessToken, supplierName.trim(), submittedAt);
       const [deliveryPlan, companyIntroduction] = await Promise.all([
-        uploadToDeliveryDrive(accessToken, planFile),
-        uploadToDeliveryDrive(accessToken, introductionFile),
+        uploadToDeliveryDrive(accessToken, planFile, folderId),
+        uploadToDeliveryDrive(accessToken, introductionFile, folderId),
       ]);
       const requestRef = push(ref(db, "requests"));
       if (!requestRef.key) throw new Error("Không tạo được mã đăng ký.");
@@ -641,9 +644,10 @@ function App() {
     try {
       if (planFile || introductionFile) {
         const accessToken = await getDriveAccessToken(user);
+        const folderId = await getSubmissionDriveFolder(accessToken, supplierName.trim(), selected.createdAt);
         const [deliveryPlan, companyIntroduction] = await Promise.all([
-          planFile ? uploadToDeliveryDrive(accessToken, planFile) : Promise.resolve(selected.attachments?.deliveryPlan),
-          introductionFile ? uploadToDeliveryDrive(accessToken, introductionFile) : Promise.resolve(selected.attachments?.companyIntroduction),
+          planFile ? uploadToDeliveryDrive(accessToken, planFile, folderId) : Promise.resolve(selected.attachments?.deliveryPlan),
+          introductionFile ? uploadToDeliveryDrive(accessToken, introductionFile, folderId) : Promise.resolve(selected.attachments?.companyIntroduction),
         ]);
         const updatedAttachments: RequestAttachments = {
           ...(deliveryPlan ? { deliveryPlan } : {}),
@@ -1029,7 +1033,7 @@ function App() {
               <Pagination page={notificationPage} pageSize={20} total={filteredNotifications.length} onPageChange={setNotificationPage} />
             </section>
           ) : effectivePage === "deepAdmin" && developer ? (
-            <DeepAdminPage currentUserUid={user.uid} />
+            <DeepAdminPage currentUserUid={user.uid} user={user} />
           ) : effectivePage === "profile" ? (
             <ProfilePage
               user={user}

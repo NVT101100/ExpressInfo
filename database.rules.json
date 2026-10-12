@@ -224,9 +224,10 @@
     },
     "activityLogs": {
       ".indexOn": ["createdAt"],
-      ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (auth.token.email == 'nvthoi19112002@gmail.com' || root.child('roles').child(auth.uid).child('role').val() == 'developer')",
+      ".read": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && (auth.token.email == 'nvthoi19112002@gmail.com' || root.child('roles').child(auth.uid).child('role').val() == 'developer' || root.child('roles').child(auth.uid).child('role').val() == 'admin')",
+      ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && !newData.exists() && (auth.token.email == 'nvthoi19112002@gmail.com' || root.child('roles').child(auth.uid).child('role').val() == 'developer' || root.child('roles').child(auth.uid).child('role').val() == 'admin')",
       "$logId": {
-        ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && ((!data.exists() && newData.child('actorUid').val() == auth.uid && newData.child('actorEmail').val() == auth.token.email) || (data.exists() && !newData.exists() && (auth.token.email == 'nvthoi19112002@gmail.com' || root.child('roles').child(auth.uid).child('role').val() == 'developer')))",
+        ".write": "auth != null && auth.token.firebase.sign_in_provider == 'google.com' && ((!data.exists() && newData.child('actorUid').val() == auth.uid && newData.child('actorEmail').val() == auth.token.email) || (data.exists() && !newData.exists() && (auth.token.email == 'nvthoi19112002@gmail.com' || root.child('roles').child(auth.uid).child('role').val() == 'developer' || root.child('roles').child(auth.uid).child('role').val() == 'admin')))",
         ".validate": "newData.hasChildren(['actorUid', 'actorEmail', 'action', 'details', 'createdAt']) && newData.child('action').val().matches(/^(request_created|request_updated|request_status_changed|request_tracking_changed|request_deleted|message_sent|spreadsheet_uploaded|spreadsheet_exported|request_viewed|page_opened|profile_updated|signed_in|signed_out)$/) && newData.child('details').isString() && newData.child('details').val().length <= 1000 && newData.child('createdAt').isNumber()",
         "actorUid": { ".validate": "newData.val() == auth.uid" },
         "actorEmail": { ".validate": "newData.val() == auth.token.email" },

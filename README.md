@@ -7,7 +7,7 @@
 1. Tạo Firebase project, bật **Authentication → Google** và tạo **Realtime Database**.
 2. Sao chép `.env.example` thành `.env.local`, điền Firebase Web App config cùng Realtime Database URL.
 3. Trong Realtime Database, tạo/cập nhật `/roles/{uid}` cho từng tài khoản và đặt `role` thành `admin`, `developer` hoặc `user`. Rules không cần whitelist UID; quyền được lấy từ role trong DB. Thêm `email` và tùy chọn `displayName` để admin xuất hiện trong danh sách người nhận chat.
-4. Bật **Google Drive API** trong Google Cloud Console. Tạo thư mục Drive dùng chung, cấp quyền Editor cho các tài khoản nhà cung cấp/admin cần tải hoặc xem hồ sơ, rồi điền ID thư mục vào `GOOGLE_DRIVE_DELIVERY_FOLDER_ID` trong `src/config.ts`. Nhà cung cấp cần có quyền tạo file trong thư mục; các thành viên được chia sẻ thư mục mới mở được file.
+4. Bật **Google Drive API** trong Google Cloud Console. Tạo thư mục Drive dùng chung, cấp quyền Editor cho các tài khoản nhà cung cấp/admin cần tải hoặc xem hồ sơ và Developer cần quản lý file, rồi điền ID thư mục vào `GOOGLE_DRIVE_DELIVERY_FOLDER_ID` trong `src/config.ts`. Nhà cung cấp cần có quyền tạo file trong thư mục; các thành viên được chia sẻ thư mục mới mở được file.
 5. Cài dependencies rồi chạy:
 
    ```sh
@@ -24,7 +24,7 @@
 
    Khi deploy bằng GitHub Actions, thêm các repository secrets mà workflow sử dụng: `VITE_FIREBASE_API_KEY`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_STORAGE_BUCKET`, `VITE_FIREBASE_MESSAGING_SENDER_ID`, `VITE_FIREBASE_APP_ID`, `VITE_FIREBASE_DATABASE_URL` và `FIREBASE_TOKEN`. Các biến `VITE_*` được nhúng vào ứng dụng trong bước build; sau khi đổi secrets, cần chạy lại workflow để deploy bản build mới.
 
-Khi đăng nhập Google, ứng dụng xin thêm quyền `drive.file` để tải hồ sơ trực tiếp lên thư mục Drive; access token chỉ được giữ tạm trong bộ nhớ phiên và không lưu vào Realtime Database. Nếu token hết hạn hoặc khôi phục phiên đăng nhập cũ chưa có scope Drive, ứng dụng có thể mở popup Google để xin lại quyền trước khi tải file.
+Khi đăng nhập Google, ứng dụng xin quyền `drive.file` để tải hồ sơ trực tiếp lên thư mục Drive; file được xếp theo `Tên nhà cung cấp/Ngày gửi form (YYYY-MM-DD)/`. Access token chỉ được giữ tạm trong bộ nhớ phiên và không lưu vào Realtime Database. Trong Deep Admin, thao tác kết nối/quản lý Drive mới xin thêm quyền `drive` để Developer có thể liệt kê và xóa file do các tài khoản khác tải lên thư mục dùng chung. Quyền này rộng hơn và có thể yêu cầu xác minh OAuth của Google; chỉ cấp cho tài khoản Developer cần quản lý file. Nếu token hết hạn hoặc chưa có scope cần thiết, ứng dụng mở popup Google để xin lại quyền.
 
 ## Cấu hình file Excel
 
