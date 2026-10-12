@@ -5,12 +5,14 @@ import ItemsEditor from "./ItemsEditor";
 
 interface SupplierRegistrationFormProps {
   supplierName: string;
+  notes: string;
   items: DeliveryItem[];
   planFileName: string;
   introductionFileName: string;
   saving: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onSupplierName: (value: string) => void;
+  onNotes: (value: string) => void;
   onPlanFile: (file?: File) => void;
   onDownloadTemplate: () => void;
   onIntroductionFile: (file?: File) => void;
@@ -20,12 +22,14 @@ interface SupplierRegistrationFormProps {
 
 export default function SupplierRegistrationForm({
   supplierName,
+  notes,
   items,
   planFileName,
   introductionFileName,
   saving,
   onSubmit,
   onSupplierName,
+  onNotes,
   onPlanFile,
   onDownloadTemplate,
   onIntroductionFile,
@@ -66,6 +70,17 @@ export default function SupplierRegistrationForm({
             <input className="text-input" value={supplierName} onChange={(event) => onSupplierName(event.target.value)} required maxLength={160} placeholder="Tên công ty / nhà cung cấp" />
           </label>
         </div>
+        <label className="field field-full registration-notes-field">
+          <span className="field-label">Ghi chú cho phiếu</span>
+          <textarea
+            className="text-input notes-input"
+            value={notes}
+            onChange={(event) => onNotes(event.target.value)}
+            disabled={saving}
+            maxLength={2000}
+            placeholder="Thông tin cần lưu ý về kế hoạch giao hàng (không bắt buộc)"
+          />
+        </label>
 
         <div className="section-title supplier-attachment-title">
           <span className="step">03</span>

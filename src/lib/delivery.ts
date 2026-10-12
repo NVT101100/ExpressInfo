@@ -154,6 +154,12 @@ export async function exportRequests(requests: DeliveryRequest[]) {
         ? new Date(request.createdAt).toLocaleString("vi-VN")
         : "",
       "Trạng thái": statusLabels[request.status],
+      "Mail giao hàng": request.deliveryEmailSentAt
+        ? new Date(request.deliveryEmailSentAt).toLocaleString("vi-VN")
+        : "",
+      "Xuất hóa đơn": request.invoiceIssuedAt
+        ? new Date(request.invoiceIssuedAt).toLocaleString("vi-VN")
+        : "",
       "File kế hoạch": request.attachments?.deliveryPlan?.url ?? "",
       "Giấy giới thiệu": request.attachments?.companyIntroduction?.url ?? "",
       ...Object.fromEntries(
@@ -172,6 +178,8 @@ export async function exportRequests(requests: DeliveryRequest[]) {
     "Email",
     "Ngày gửi",
     "Trạng thái",
+    "Mail giao hàng",
+    "Xuất hóa đơn",
     "File kế hoạch",
     "Giấy giới thiệu",
     ...EXCEL_TEMPLATE.columns.map((column) => column.label),

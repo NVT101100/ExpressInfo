@@ -44,6 +44,8 @@ export interface RequestDocument {
   attachments?: RequestAttachments;
   createdAt: number;
   templateHeaders: string[];
+  deliveryEmailSentAt?: number;
+  invoiceIssuedAt?: number;
 }
 
 export interface RevisionDocument {
@@ -108,6 +110,7 @@ export type ActivityAction =
   | "request_created"
   | "request_updated"
   | "request_status_changed"
+  | "request_tracking_changed"
   | "request_deleted"
   | "message_sent"
   | "spreadsheet_uploaded"

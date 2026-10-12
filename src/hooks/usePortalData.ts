@@ -5,7 +5,9 @@ import {
   orderByChild,
   query,
   ref,
+  serverTimestamp,
   type DatabaseReference,
+  set,
 } from "firebase/database";
 import type { User } from "firebase/auth";
 import { db } from "../firebase";
@@ -23,6 +25,11 @@ interface RoleRecord {
   role?: string;
   email?: string;
   displayName?: string;
+}
+
+export interface ProfileContactName {
+  organization: string;
+  displayName: string;
 }
 
 function profileFromSnapshot(
@@ -47,6 +54,8 @@ export function usePortalData(
   reportError: Dispatch<SetStateAction<string>>,
 ) {
   const [requests, setRequests] = useState<DeliveryRequest[]>([]);
+  const [readRequestIds, setReadRequestIds] = useState<Set<string>>(() => new Set());
+  const [requestReadsLoaded, setRequestReadsLoaded] = useState(false);
   const [notifications, setNotifications] = useState<NotificationDocument[]>([]);
   const [readNotificationIds, setReadNotificationIds] = useState<Set<string>>(() => new Set());
   const [deletedNotificationIds, setDeletedNotificationIds] = useState<Set<string>>(() => new Set());
@@ -59,6 +68,7 @@ export function usePortalData(
   const [loadingRequests, setLoadingRequests] = useState(false);
   const [role, setRole] = useState<UserRole | null>(null);
   const [adminRecipients, setAdminRecipients] = useState<AdminRecipient[]>([]);
+  const [profileContactNames, setProfileContactNames] = useState<Record<string, ProfileContactName>>({});
 
   useEffect(() => {
     setRole(null);
@@ -88,6 +98,76 @@ export function usePortalData(
   }, [user, reportError]);
 
   const admin = role === "admin";
+
+  useEffect(() => {
+    setProfileContactNames({});
+    if (!user || !db || role === null) return;
+    const database = db;
+    if (admin) {
+      return onValue(
+        ref(database, "profiles"),
+        (snapshot) => {
+          const profiles = snapshot.val() as Record<string, Partial<UserProfile>> | null;
+          setProfileContactNames(
+            Object.fromEntries(
+              Object.entries(profiles ?? {}).map(([uid, profile]) => [uid, {
+                organization: profile.organization?.trim() ?? "",
+                displayName: profile.displayName?.trim() ?? "",
+              }]),
+            ),
+          );
+        },
+        (cause) => reportError(`Không tải được thông tin liên hệ từ hồ sơ: ${cause.message}`),
+      );
+    }
+    const stops = adminRecipients.flatMap((recipient) => [
+      onValue(
+        ref(database, `profiles/${recipient.uid}/organization`),
+        (snapshot) => {
+          const organization = snapshot.val();
+          setProfileContactNames((current) => ({
+            ...current,
+            [recipient.uid]: {
+              organization: typeof organization === "string" ? organization.trim() : "",
+              displayName: current[recipient.uid]?.displayName ?? recipient.label,
+            },
+          }));
+        },
+        (cause) => reportError(`Không tải được tên tổ chức từ hồ sơ admin: ${cause.message}`),
+      ),
+      onValue(
+        ref(database, `profiles/${recipient.uid}/displayName`),
+        (snapshot) => {
+          const displayName = snapshot.val();
+          setProfileContactNames((current) => ({
+            ...current,
+            [recipient.uid]: {
+              organization: current[recipient.uid]?.organization ?? "",
+              displayName: typeof displayName === "string" && displayName.trim()
+                ? displayName.trim()
+                : recipient.label,
+            },
+          }));
+        },
+        (cause) => reportError(`Không tải được tên hiển thị admin: ${cause.message}`),
+      ),
+    ]);
+    return () => stops.forEach((stop) => stop());
+  }, [admin, adminRecipients, reportError, role, user]);
+
+  useEffect(() => {
+    setReadRequestIds(new Set());
+    setRequestReadsLoaded(false);
+    if (!user || !admin || !db) return;
+    return onValue(
+      ref(db, `requestReads/${user.uid}`),
+      (snapshot) => {
+        setReadRequestIds(new Set(Object.keys(snapshot.val() ?? {})));
+        setRequestReadsLoaded(true);
+      },
+      (cause) => reportError(`Không tải được trạng thái đã xem của phiếu: ${cause.message}`),
+    );
+  }, [user, admin, reportError]);
 
   useEffect(() => {
     if (!user || !db) {
@@ -174,14 +254,31 @@ export function usePortalData(
     const profileRef: DatabaseReference = ref(db, `profiles/${user.uid}`);
     return onValue(
       profileRef,
-      (snapshot) =>
-        setProfile(profileFromSnapshot(snapshot.val() as Partial<UserProfile> | null, user)),
+      (snapshot) => {
+        if (!snapshot.exists() && role !== null) {
+          const initialProfile: UserProfile = {
+            displayName: user.displayName || "",
+            organization: role === "admin" ? "VASG" : "",
+            phone: "",
+          };
+          void set(profileRef, {
+            ...initialProfile,
+            updatedAt: serverTimestamp(),
+          }).catch((cause: unknown) => {
+            reportError(`Không thể tự tạo hồ sơ: ${cause instanceof Error ? cause.message : "lỗi không xác định."}`);
+          });
+          return;
+        }
+        setProfile(profileFromSnapshot(snapshot.val() as Partial<UserProfile> | null, user));
+      },
       (cause) => reportError(`Không tải được hồ sơ: ${cause.message}`),
     );
-  }, [user, reportError]);
+  }, [user, reportError, role]);
 
   return {
     requests,
+    readRequestIds,
+    requestReadsLoaded,
     notifications,
     readNotificationIds,
     deletedNotificationIds,
@@ -190,5 +287,6 @@ export function usePortalData(
     loadingRequests,
     role,
     adminRecipients,
+    profileContactNames,
   };
 }

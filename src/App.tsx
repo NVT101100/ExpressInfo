@@ -14,10 +14,12 @@ import {
   ref,
   serverTimestamp,
   set,
+  update,
 } from "firebase/database";
 import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "./config";
 import AdminPage from "./components/AdminPage";
 import ChatWidget from "./components/ChatWidget";
+import { useConfirmation } from "./components/ConfirmationProvider";
 import DeepAdminPage from "./components/DeepAdminPage";
 import Pagination from "./components/Pagination";
 import ProfilePage from "./components/ProfilePage";
@@ -92,6 +94,7 @@ function NotificationActions({
 }
 
 function App() {
+  const confirm = useConfirmation();
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [page, setPage] = useState<Page>("supplier");
@@ -102,6 +105,7 @@ function App() {
   const [supplierRequestPage, setSupplierRequestPage] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [supplierName, setSupplierName] = useState("");
+  const [requestNotes, setRequestNotes] = useState("");
   const [items, setItems] = useState<DeliveryItem[]>([]);
   const [planFile, setPlanFile] = useState<File | null>(null);
   const [introductionFile, setIntroductionFile] = useState<File | null>(null);
@@ -111,11 +115,14 @@ function App() {
   const [notice, setNotice] = useState("");
   const [saving, setSaving] = useState(false);
   const [highlightTarget, setHighlightTarget] = useState<MentionTarget | null>(null);
+  const [chatMentionTarget, setChatMentionTarget] = useState<MentionTarget | null>(null);
   const [unreadMessageCount, setUnreadMessageCount] = useState(0);
   const openMessagesPage = useCallback(() => setPage("messages"), []);
 
   const {
     requests,
+    readRequestIds,
+    requestReadsLoaded,
     notifications,
     readNotificationIds,
     deletedNotificationIds,
@@ -124,6 +131,7 @@ function App() {
     loadingRequests,
     role,
     adminRecipients,
+    profileContactNames,
   } = usePortalData(
     user,
     setError,
@@ -146,6 +154,12 @@ function App() {
 
   async function markAllNotificationsRead() {
     if (!db || !user || unreadNotificationCount === 0) return;
+    const confirmed = await confirm({
+      title: "Đánh dấu tất cả thông báo đã đọc?",
+      message: `Thao tác này sẽ đánh dấu ${unreadNotificationCount} thông báo chưa đọc là đã đọc.`,
+      confirmLabel: "Đánh dấu đã đọc",
+    });
+    if (!confirmed) return;
     setMarkingAllRead(true);
     try {
       const batch = visibleNotifications
@@ -177,8 +191,27 @@ function App() {
     }
   }
 
+  function markRequestRead(requestId: string) {
+    if (!db || !user || !admin || readRequestIds.has(requestId)) return;
+    void set(ref(db, `requestReads/${user.uid}/${requestId}`), serverTimestamp())
+      .catch((cause: unknown) => {
+        setError(
+          cause instanceof Error
+            ? `Không lưu được trạng thái đã xem của phiếu: ${cause.message}`
+            : "Không lưu được trạng thái đã xem của phiếu.",
+        );
+      });
+  }
+
   async function deleteNotification(notificationId: string) {
     if (!db || !user || deletedNotificationIds.has(notificationId)) return;
+    const confirmed = await confirm({
+      title: "Xóa thông báo?",
+      message: "Thông báo sẽ bị xóa khỏi danh sách của bạn. Không thể hoàn tác thao tác này.",
+      confirmLabel: "Xóa thông báo",
+      destructive: true,
+    });
+    if (!confirmed) return;
     try {
       await set(ref(db, `notifications/deleted/${user.uid}/${notificationId}`), serverTimestamp());
       setOpenNotificationMenuId(null);
@@ -223,6 +256,7 @@ function App() {
     if (!selected) {
       if (!selectedId) {
         setSupplierName("");
+        setRequestNotes("");
         setItems([]);
         setPlanFile(null);
         setIntroductionFile(null);
@@ -275,6 +309,7 @@ function App() {
               window.focus();
               void markNotificationRead(notification.id);
               if (notification.requestId) {
+                markRequestRead(notification.requestId);
                 setPage(admin ? "admin" : "supplier");
                 setSelectedId(notification.requestId);
               }
@@ -286,7 +321,7 @@ function App() {
       }
     }
     seenNotificationIds.current = nextIds;
-  }, [admin, visibleNotifications, notificationsLoaded]);
+  }, [admin, visibleNotifications, notificationsLoaded, readRequestIds]);
 
   const supplierRequests = useMemo(
     () => requests.filter((request) => !request.deleted).sort((a, b) => {
@@ -340,6 +375,12 @@ function App() {
 
   async function handleProfileSave(nextProfile: Omit<typeof profile, "updatedAt">) {
     if (!db || !user || !auth?.currentUser) return;
+    const confirmed = await confirm({
+      title: "Lưu thay đổi hồ sơ?",
+      message: "Tên hiển thị và thông tin liên hệ sẽ được cập nhật cho tài khoản của bạn.",
+      confirmLabel: "Lưu hồ sơ",
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError("");
     try {
@@ -435,6 +476,12 @@ function App() {
       setError("Hãy nhập tên nhà cung cấp, tải file kế hoạch Excel và giấy giới thiệu.");
       return;
     }
+    const confirmed = await confirm({
+      title: "Gửi đăng ký giao hàng?",
+      message: `Bạn sắp gửi đăng ký cho ${supplierName.trim()} gồm ${items.length} dòng hàng và các file đính kèm.`,
+      confirmLabel: "Gửi đăng ký",
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError("");
     try {
@@ -450,6 +497,7 @@ function App() {
         ownerEmail: user.email ?? "",
         ownerName: user.displayName ?? user.email ?? "Nhà cung cấp",
         supplierName: supplierName.trim(),
+        ...(requestNotes.trim() ? { notes: requestNotes.trim() } : {}),
         deliveryGroup: DELIVERY_GROUP,
         items,
         attachments: { deliveryPlan, companyIntroduction },
@@ -463,6 +511,7 @@ function App() {
         requestRef.key,
       );
       setSupplierName("");
+      setRequestNotes("");
       setItems([]);
       setPlanFile(null);
       setIntroductionFile(null);
@@ -580,6 +629,13 @@ function App() {
       return;
     }
 
+    const confirmed = await confirm({
+      title: "Lưu chỉnh sửa phiếu?",
+      message: `Các thay đổi sau sẽ được lưu vào lịch sử phiếu: ${Object.keys(changes).join(", ")}.`,
+      confirmLabel: "Lưu thay đổi",
+    });
+    if (!confirmed) return;
+
     setSaving(true);
     setError("");
     try {
@@ -633,6 +689,12 @@ function App() {
   async function handleStatusChange(status: RequestStatus, requestId = selected?.id) {
     const targetRequest = requests.find((request) => request.id === requestId);
     if (!targetRequest || targetRequest.deleted || !admin || targetRequest.status === status) return;
+    const confirmed = await confirm({
+      title: "Xác nhận thay đổi trạng thái phiếu?",
+      message: `Phiếu của ${targetRequest.supplierName} sẽ chuyển sang trạng thái "${statusLabels[status]}".`,
+      confirmLabel: "Cập nhật trạng thái",
+    });
+    if (!confirmed) return;
     setSaving(true);
     setError("");
     try {
@@ -665,9 +727,66 @@ function App() {
     }
   }
 
+  async function handleTrackingStatusChange(
+    requestIds: string[],
+    trackingStatus: "deliveryEmailSent" | "invoiceIssued",
+    marked: boolean,
+  ) {
+    if (!db || !admin) {
+      setError("Bạn không có quyền cập nhật trạng thái theo dõi.");
+      return;
+    }
+    const targets = [...new Set(requestIds)]
+      .map((requestId) => requests.find((request) => request.id === requestId))
+      .filter((request): request is DeliveryRequest => !!request && !request.deleted);
+    if (targets.length !== new Set(requestIds).size) {
+      setError("Một số phiếu không còn khả dụng. Hãy tải lại danh sách rồi thử lại.");
+      return;
+    }
+    const trackingLabel = trackingStatus === "deliveryEmailSent"
+      ? "đã gửi mail giao hàng"
+      : "đã xuất hóa đơn";
+    const confirmed = await confirm({
+      title: `${marked ? "Đánh dấu" : "Bỏ đánh dấu"} ${targets.length} phiếu?`,
+      message: `Thao tác này sẽ ${marked ? "đánh dấu" : "bỏ đánh dấu"} ${targets.length} phiếu ${trackingLabel}.`,
+      confirmLabel: marked ? "Xác nhận đánh dấu" : "Bỏ đánh dấu",
+    });
+    if (!confirmed) return;
+    const field = trackingStatus === "deliveryEmailSent"
+      ? "deliveryEmailSentAt"
+      : "invoiceIssuedAt";
+    const value = marked ? Date.now() : null;
+    const updates = Object.fromEntries(
+      targets.map((request) => [`requests/${request.id}/${field}`, value]),
+    );
+    try {
+      await update(ref(db), updates);
+      setNotice(
+        `Đã ${marked ? "đánh dấu" : "bỏ đánh dấu"} ${targets.length} phiếu ${trackingLabel}.`,
+      );
+      await recordActivity(
+        "request_tracking_changed",
+        `${marked ? "Đánh dấu" : "Bỏ đánh dấu"} ${targets.length} phiếu ${trackingLabel}.`,
+        targets.length === 1 ? targets[0].id : undefined,
+      );
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? `Không cập nhật được trạng thái theo dõi: ${cause.message}`
+          : "Không cập nhật được trạng thái theo dõi.",
+      );
+    }
+  }
+
   async function handleDelete() {
     if (!selected || !admin) return;
-    if (!window.confirm("Ẩn phiếu này khỏi danh sách? Dữ liệu gốc và lịch sử vẫn được giữ.")) return;
+    const confirmed = await confirm({
+      title: "Xóa mềm phiếu giao hàng?",
+      message: "Phiếu sẽ bị ẩn khỏi danh sách quản trị. Dữ liệu gốc và lịch sử vẫn được giữ.",
+      confirmLabel: "Xóa mềm phiếu",
+      destructive: true,
+    });
+    if (!confirmed) return;
     setSaving(true);
     try {
       await saveRevision(selected, {}, undefined, true);
@@ -726,6 +845,7 @@ function App() {
     setSelectedId(id);
     setHighlightTarget(null);
     setError("");
+    markRequestRead(id);
     if (user) void recordActivity("request_viewed", "Mở chi tiết phiếu giao hàng.", id);
   };
 
@@ -747,6 +867,15 @@ function App() {
     setHighlightTarget(target);
     setSelectedId(target.requestId);
     setPage(admin ? "admin" : "supplier");
+    setError("");
+    markRequestRead(target.requestId);
+  };
+
+  const openChatMention = (target: MentionTarget) => {
+    setChatMentionTarget(target);
+    setPage("messages");
+    setSelectedId(null);
+    setHighlightTarget(null);
     setError("");
   };
 
@@ -815,6 +944,8 @@ function App() {
             admin={admin}
             adminRecipients={adminRecipients}
             requests={requests}
+            profileContactNames={profileContactNames}
+            initialMention={chatMentionTarget}
             onOpenMention={openMentionedContent}
             onUnreadCountChange={setUnreadMessageCount}
             onOpenMessages={openMessagesPage}
@@ -911,11 +1042,14 @@ function App() {
               <div className={selected ? "admin-list-hidden" : ""} aria-hidden={!!selected}>
                 <AdminPage
                   requests={requests}
+                  readRequestIds={readRequestIds}
+                  requestReadsLoaded={requestReadsLoaded}
                   loading={loadingRequests}
                   selectedId={selectedId}
                   focusRequestId={highlightTarget?.requestId ?? null}
                   onSelect={openRequest}
                   onStatusChange={(id, status) => handleStatusChange(status, id)}
+                  onTrackingStatusChange={handleTrackingStatusChange}
                   onExport={(exported, mode) => {
                     void recordActivity(
                       "spreadsheet_exported",
@@ -932,11 +1066,14 @@ function App() {
                 </div>
                 <RequestDetail
                 request={selected}
+                user={user}
                 admin
                 supplierName={supplierName}
                 items={items}
                 saving={saving}
                 highlightTarget={highlightTarget}
+                onMention={openChatMention}
+                onOpenMention={openMentionedContent}
                 onBack={() => { setSelectedId(null); setHighlightTarget(null); }}
                 onSupplierName={setSupplierName}
                 onItemChange={updateItem}
@@ -956,11 +1093,14 @@ function App() {
               <section className="primary-column">
                 {selected ? <RequestDetail
                   request={selected}
+                  user={user}
                   admin={admin}
                   supplierName={supplierName}
                   items={items}
                   saving={saving}
                   highlightTarget={highlightTarget}
+                  onMention={openChatMention}
+                  onOpenMention={openMentionedContent}
                   onBack={() => { setSelectedId(null); setHighlightTarget(null); }}
                   onSupplierName={setSupplierName}
                   onItemChange={updateItem}
@@ -975,12 +1115,14 @@ function App() {
                   onDelete={() => void handleDelete()}
                 /> : <SupplierRegistrationForm
                   supplierName={supplierName}
+                  notes={requestNotes}
                   items={items}
                   planFileName={planFileName}
                   introductionFileName={introductionFileName}
                   saving={saving}
                   onSubmit={(event) => void handleSubmit(event)}
                   onSupplierName={setSupplierName}
+                  onNotes={setRequestNotes}
                   onPlanFile={(file) => void handlePlanFile(file)}
                   onDownloadTemplate={() => void handleDownloadTemplate()}
                   onIntroductionFile={handleIntroductionFile}

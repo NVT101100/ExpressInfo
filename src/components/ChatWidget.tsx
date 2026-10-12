@@ -2,8 +2,9 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import type { User } from "firebase/auth";
 import { limitToLast, onValue, orderByChild, push, query, ref, remove, serverTimestamp, set } from "firebase/database";
 import { EXCEL_TEMPLATE } from "../config";
+import { useConfirmation } from "./ConfirmationProvider";
 import { db } from "../firebase";
-import type { AdminRecipient } from "../hooks/usePortalData";
+import type { AdminRecipient, ProfileContactName } from "../hooks/usePortalData";
 import { logActivity } from "../lib/activity";
 import { statusLabels } from "../lib/delivery";
 import Pagination from "./Pagination";
@@ -27,6 +28,8 @@ interface ChatWidgetProps {
   admin: boolean;
   adminRecipients: AdminRecipient[];
   requests: DeliveryRequest[];
+  profileContactNames: Record<string, ProfileContactName>;
+  initialMention: MentionTarget | null;
   supplierDisplayName: string;
   onOpenMention: (target: MentionTarget) => void;
   onUnreadCountChange: (count: number) => void;
@@ -40,7 +43,8 @@ function entries<T extends object>(value: unknown): Array<[string, T]> {
   return Object.entries(value) as Array<[string, T]>;
 }
 
-export default function ChatWidget({ user, admin, adminRecipients, requests, supplierDisplayName, onOpenMention, onUnreadCountChange, onOpenMessages, active, hidden }: ChatWidgetProps) {
+export default function ChatWidget({ user, admin, adminRecipients, requests, profileContactNames, initialMention, supplierDisplayName, onOpenMention, onUnreadCountChange, onOpenMessages, active, hidden }: ChatWidgetProps) {
+  const confirm = useConfirmation();
   const [selectedContactUid, setSelectedContactUid] = useState("");
   const [selectedAdminUid, setSelectedAdminUid] = useState("");
   const [showNewConversation, setShowNewConversation] = useState(false);
@@ -58,6 +62,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
   const [mentionRequestId, setMentionRequestId] = useState("");
   const [mentionSelection, setMentionSelection] = useState("");
   const [mentionEnabled, setMentionEnabled] = useState(false);
+  const processedInitialMention = useRef<MentionTarget | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [permission, setPermission] = useState(
@@ -190,6 +195,14 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
     || a.name.localeCompare(b.name),
   ), [chatContacts, contacts]);
   const visibleContacts = sortedContacts.slice(contactPage * CONTACT_PAGE_SIZE, (contactPage + 1) * CONTACT_PAGE_SIZE);
+  const getContactDisplayName = (uid: string, organizationFallback: string, displayNameFallback: string) => {
+    const profileName = profileContactNames[uid];
+    const organization = profileName?.organization || organizationFallback;
+    const displayName = profileName?.displayName || displayNameFallback;
+    return organization && displayName
+      ? `${organization} - ${displayName}`
+      : organization || displayName;
+  };
 
   function getInitials(name = "") {
     const clean = (name || "").trim();
@@ -320,7 +333,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
     () => mentionRequests.find((request) => request.id === mentionRequestId),
     [mentionRequestId, mentionRequests],
   );
-  const mentionTarget: MentionTarget | undefined = useMemo(() => {
+  const selectedMentionTarget: MentionTarget | undefined = useMemo(() => {
     if (!mentionRequest || !mentionSelection) return undefined;
     const [kind, keyOrIndex] = mentionSelection.split(":");
     if (kind === "field") {
@@ -358,9 +371,41 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
     }
     return undefined;
   }, [mentionRequest, mentionSelection]);
+
+  useEffect(() => {
+    if (!initialMention || processedInitialMention.current === initialMention) return;
+    processedInitialMention.current = initialMention;
+    const request = requests.find((entry) => entry.id === initialMention.requestId);
+    if (!request || request.deleted || (!admin && request.ownerUid !== user.uid)) {
+      setError("Không thể đề cập phiếu này trong cuộc trò chuyện.");
+      return;
+    }
+    if (admin) {
+      if (adminRecipients.some((recipient) => recipient.uid === request.ownerUid)) {
+        setError("Chỉ có thể đề cập phiếu của nhà cung cấp trong cuộc trò chuyện.");
+        return;
+      }
+      setSelectedContactUid(request.ownerUid);
+      const contactIndex = sortedContacts.findIndex((contact) => contact.uid === request.ownerUid);
+      if (contactIndex >= 0) setContactPage(Math.floor(contactIndex / CONTACT_PAGE_SIZE));
+    }
+    setMentionDate(request.deliveryDate || "unknown");
+    setMentionSupplierName(request.supplierName);
+    setMentionRequestId(request.id);
+    setMentionSelection(initialMention.field === "item"
+      ? `item:${initialMention.itemIndex}`
+      : `field:${initialMention.field}`);
+    setMentionEnabled(true);
+    setError("");
+  }, [admin, adminRecipients, initialMention, requests, sortedContacts, user.uid]);
   const contactName = admin
-    ? [activeContact?.supplierName, activeContact?.name].filter(Boolean).join(" · ") || activeContact?.email || "Nhà cung cấp"
-    : adminRecipients.find((recipient) => recipient.uid === selectedAdminUid)?.label ?? "Quản trị viên";
+    ? activeContact
+      ? getContactDisplayName(activeContact.uid, activeContact.supplierName, activeContact.name || activeContact.email)
+      : "Nhà cung cấp"
+    : (() => {
+      const recipient = adminRecipients.find((entry) => entry.uid === selectedAdminUid);
+      return recipient ? getContactDisplayName(recipient.uid, "", recipient.label) : "Quản trị viên";
+    })();
 
   useEffect(() => {
     if (!db || !chatUid || !threadKey) {
@@ -472,7 +517,7 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
           supplierName: activeContact?.supplierName || activeContact?.name || "",
           recipientEmail: activeContact?.email || "",
         }),
-        ...(mentionTarget && !activeContactIsAdmin ? { mention: mentionTarget } : {}),
+        ...(selectedMentionTarget && !activeContactIsAdmin ? { mention: selectedMentionTarget } : {}),
         text: text.trim(),
         createdAt: serverTimestamp(),
       });
@@ -492,7 +537,14 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
   }
 
   async function deleteMessage(messageId: string) {
-    if (!db || !window.confirm("Xóa tin nhắn này?")) return;
+    if (!db) return;
+    const confirmed = await confirm({
+      title: "Xóa tin nhắn?",
+      message: "Tin nhắn này sẽ bị xóa khỏi cuộc hội thoại.",
+      confirmLabel: "Xóa tin nhắn",
+      destructive: true,
+    });
+    if (!confirmed) return;
     try {
       await remove(ref(db, `${conversationPath}/messages/${messageId}`));
     } catch (cause) {
@@ -526,13 +578,13 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
               className="button secondary conversation-new-button"
               onClick={() => setShowNewConversation((visible) => !visible)}
             >
-              {showNewConversation ? "Đóng chọn người dùng" : "+ Cuộc trò chuyện mới"}
+              {showNewConversation ? "Đóng chọn nhà cung cấp" : "+ Cuộc trò chuyện mới"}
             </button>
           )}
           {admin && showNewConversation && (
             <div className="conversation-new-form">
-              <select className="text-input" aria-label="Chọn người dùng để trò chuyện" value={newContactUid} onChange={(event) => setNewContactUid(event.target.value)}>
-                {contacts.map((contact) => <option key={contact.uid} value={contact.uid}>{[contact.supplierName, contact.name].filter(Boolean).join(" · ") || contact.email}</option>)}
+              <select className="text-input" aria-label="Chọn nhà cung cấp để trò chuyện" value={newContactUid} onChange={(event) => setNewContactUid(event.target.value)}>
+                {contacts.map((contact) => <option key={contact.uid} value={contact.uid}>{getContactDisplayName(contact.uid, contact.supplierName, contact.name || contact.email)}</option>)}
               </select>
               <button className="button primary" disabled={!newContactUid} onClick={() => { setSelectedContactUid(newContactUid); setShowNewConversation(false); }}>Mở hội thoại</button>
             </div>
@@ -545,10 +597,11 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                 const unread = unreadByContact[contact.uid] ?? 0;
                 return (
                   <button key={contact.uid} className={`conversation-contact contact-messenger-style ${selectedContactUid === contact.uid ? "active" : ""}`} onClick={() => setSelectedContactUid(contact.uid)}>
-                    <span className="contact-avatar" style={{ background: getAvatarColor(contact.uid) }}>{getInitials(contact.supplierName || contact.name || contact.email)}</span>
                     <div className="contact-text">
                       <div className="contact-row-1">
-                        <strong className="contact-name">{contact.supplierName || contact.name || contact.email}</strong>
+                        <strong className="contact-name">
+                          {getContactDisplayName(contact.uid, contact.supplierName, contact.name || contact.email)}
+                        </strong>
                         <span className="contact-time">{conversation?.lastMessageAt ? formatChatTime(conversation.lastMessageAt) : ""}</span>
                       </div>
                       <div className="contact-row-2">
@@ -560,12 +613,11 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                 );
               })
             ) : (
-              visibleAdminRecipients.map((recipient) => (
-                <button key={recipient.uid} className={`conversation-contact contact-messenger-style ${selectedAdminUid === recipient.uid ? "active" : ""}`} onClick={() => setSelectedAdminUid(recipient.uid)}>
-                  <span className="contact-avatar" style={{ background: getAvatarColor(recipient.uid) }}>{getInitials(recipient.label || recipient.email)}</span>
-                  <div className="contact-text">
+                visibleAdminRecipients.map((recipient) => (
+                  <button key={recipient.uid} className={`conversation-contact contact-messenger-style ${selectedAdminUid === recipient.uid ? "active" : ""}`} onClick={() => setSelectedAdminUid(recipient.uid)}>
+                    <div className="contact-text">
                     <div className="contact-row-1">
-                      <strong className="contact-name">{recipient.label}</strong>
+                        <strong className="contact-name">{getContactDisplayName(recipient.uid, "", recipient.label)}</strong>
                     </div>
                     <div className="contact-row-2">
                       <span className="contact-last-message contact-admin-email">{recipient.email}</span>
@@ -586,8 +638,8 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
         <section className="chat-window panel chat-messenger-window" aria-label="Trò chuyện">
           <header className="chat-window-header messenger-header">
             <div className="chat-header-info">
-              <strong>{admin ? "Với người dùng" : contactName}</strong>
-              <span className="chat-header-sub">{admin ? activeContact?.email || "Chọn người dùng để bắt đầu hội thoại" : contactName}</span>
+              <strong>{admin ? "Với nhà cung cấp" : contactName}</strong>
+              <span className="chat-header-sub">{admin ? activeContact?.email || "Chọn nhà cung cấp để bắt đầu hội thoại" : contactName}</span>
             </div>
           </header>
           <div className="chat-widget-messages chat-bubbles-container" aria-live="polite">
@@ -739,7 +791,18 @@ export default function ChatWidget({ user, admin, adminRecipients, requests, sup
                   </select>
                 </label>
               )}
-              {mentionTarget && <span className="mention-preview">Đề cập: {mentionTarget.label}</span>}
+            </div>
+          )}
+          {mentionEnabled && selectedMentionTarget && !activeContactIsAdmin && (
+            <div className="chat-mention-line" title={selectedMentionTarget.label}>
+              <span>Đề cập · {selectedMentionTarget.label}</span>
+              <button
+                type="button"
+                aria-label="Bỏ nội dung đề cập"
+                onClick={() => setMentionSelection("")}
+              >
+                ×
+              </button>
             </div>
           )}
           <form className="chat-form messenger-chat-form" onSubmit={(event) => void sendMessage(event)}>

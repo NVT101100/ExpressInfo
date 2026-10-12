@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import type { User } from "firebase/auth";
 import { DELIVERY_GROUP, EXCEL_TEMPLATE } from "../config";
 import { formatDate, statusLabels } from "../lib/delivery";
 import { buildGroupedSupplierEmail, copyHtmlEmailToClipboard, formatGroupedPlainEmail, type AttachmentLink } from "../lib/email";
@@ -10,17 +11,21 @@ import type {
 } from "../types";
 import Pagination from "./Pagination";
 import ItemsEditor from "./ItemsEditor";
+import RequestComments from "./RequestComments";
 
 const LIST_PAGE_SIZE = 10;
 const EMAIL_LIST_PAGE_SIZE = 20;
 
 interface RequestDetailProps {
   request: DeliveryRequest;
+  user: User;
   admin: boolean;
   supplierName: string;
   items: DeliveryItem[];
   saving: boolean;
   highlightTarget?: MentionTarget | null;
+  onMention: (target: MentionTarget) => void;
+  onOpenMention: (target: MentionTarget) => void;
   onBack: () => void;
   onSupplierName: (value: string) => void;
   onItemChange: (index: number, key: string, value: string) => void;
@@ -37,11 +42,14 @@ interface RequestDetailProps {
 
 export default function RequestDetail({
   request,
+  user,
   admin,
   supplierName,
   items,
   saving,
   highlightTarget = null,
+  onMention,
+  onOpenMention,
   onBack,
   onSupplierName,
   onItemChange,
@@ -169,6 +177,10 @@ export default function RequestDetail({
           <p className="eyebrow">{admin ? "CHI TIẾT PHIẾU" : "LỊCH SỬ ĐĂNG KÝ"}</p>
           <h1>{request.supplierName}</h1>
           <p className="muted">{request.ownerEmail} · Gửi {formatDate(request.createdAt)}</p>
+          <p id="request-field-deliveryDate" className="muted">
+            Ngày giao: {request.deliveryDate || "Chưa có ngày"}
+            {request.deliveryTime ? ` · ${request.deliveryTime}` : ""}
+          </p>
         </div>
         <div className="detail-status-stack">
           <span className={`status status-${request.status}`}>{statusLabels[request.status]}</span>
@@ -180,10 +192,24 @@ export default function RequestDetail({
           <div><h2>Thông tin đăng ký giao hàng</h2><p>Các chỉnh sửa được ghi vào lịch sử riêng, không ghi đè phiếu gốc.</p></div>
         </div>
         <div className="form-fields-grid">
-          <label className="field">
-            <span className="field-label">Tên nhà cung cấp</span>
-            <input id="request-field-supplierName" className="text-input" value={supplierName} onChange={(event) => onSupplierName(event.target.value)} disabled={disabled} required />
-          </label>
+          <div className="request-field-with-mention">
+            <label className="field">
+              <span className="field-label">Tên nhà cung cấp</span>
+              <input id="request-field-supplierName" className="text-input" value={supplierName} onChange={(event) => onSupplierName(event.target.value)} disabled={disabled} required />
+            </label>
+            <button
+              type="button"
+              className="button secondary request-mention-button"
+              disabled={disabled}
+              onClick={() => onMention({
+                requestId: request.id,
+                field: "supplierName",
+                label: `Tên nhà cung cấp: ${supplierName.slice(0, 90)}`,
+              })}
+            >
+              @ Đề cập trong chat
+            </button>
+          </div>
           <label className="field">
             <span className="field-label">Nhóm hàng hóa</span>
             <input className="text-input" value={request.deliveryGroup || DELIVERY_GROUP} readOnly />
@@ -198,6 +224,12 @@ export default function RequestDetail({
             ? <div className="request-attachment-link"><span>Giấy giới thiệu: {request.attachments.companyIntroduction.name}</span><a className="button table-action" href={request.attachments.companyIntroduction.url} target="_blank" rel="noopener noreferrer">Mở file ↗</a></div>
             : <span className="muted small">Chưa có giấy giới thiệu.</span>}
         </section>
+        {request.notes && (
+          <section className="request-initial-note">
+            <strong>Ghi chú khi gửi phiếu</strong>
+            <p>{request.notes}</p>
+          </section>
+        )}
         <div className="section-title detail-items-title">
           <span className="step">02</span>
           <div><h2>Danh sách hàng hóa</h2><p>{items.length} dòng · Nhập trực tiếp để chỉnh sửa.</p></div>
@@ -227,16 +259,26 @@ export default function RequestDetail({
           </label>
           </>
         )}
-        <ItemsEditor items={items} onChange={onItemChange} onRemove={onRemoveItem} highlightTarget={highlightTarget} disabled={disabled} />
+        <ItemsEditor
+          items={items}
+          onChange={onItemChange}
+          onRemove={onRemoveItem}
+          onMention={onMention}
+          requestId={request.id}
+          highlightTarget={highlightTarget}
+          disabled={disabled}
+        />
         {admin && !request.deleted && (
-          <section className="email-draft-panel" aria-label="Soạn email thông báo giao hàng">
-            <div className="section-title">
+          <details className="panel email-draft-panel collapsible-panel" aria-label="Soạn email thông báo giao hàng">
+            <summary className="collapsible-summary">
               <span className="step">✉</span>
               <div>
                 <h2>Soạn email danh sách dự kiến giao hàng</h2>
                 <p>Mở Outlook bằng liên kết soạn thư, rồi bấm “Sao chép email” và dán vào nội dung thư để giữ bảng có định dạng. Cần đăng nhập Outlook; kiểm tra nội dung trước khi gửi.</p>
               </div>
-            </div>
+              <span className="collapsible-chevron" aria-hidden="true" />
+            </summary>
+            <div className="collapsible-content">
             <label className="field email-recipient-field">
               <span className="field-label">Email bên nhận hàng</span>
               <input
@@ -314,7 +356,8 @@ export default function RequestDetail({
                 {!validReceiverEmail ? "Nhập email bên nhận hàng hợp lệ" : "Chọn ít nhất một dòng hàng"}
               </button>
             )}
-          </section>
+            </div>
+          </details>
         )}
         {!request.deleted && (
           <div className="detail-actions">
@@ -337,8 +380,13 @@ export default function RequestDetail({
           </div>
         )}
       </div>
-      <div className="panel history-panel">
-        <div className="section-title"><span className="step">03</span><div><h2>Lịch sử thay đổi</h2><p>Nhật ký chỉ ghi các trường đã thay đổi.</p></div></div>
+      <details className="panel history-panel collapsible-panel">
+        <summary className="collapsible-summary">
+          <span className="step">03</span>
+          <div><h2>Lịch sử thay đổi</h2><p>{request.revisions.length} mục · Nhật ký các trường đã thay đổi.</p></div>
+          <span className="collapsible-chevron" aria-hidden="true" />
+        </summary>
+        <div className="collapsible-content">
         {request.revisions.length === 0 ? <p className="muted small">Chưa có thay đổi nào.</p> : (
           <div className="timeline">
             {visibleRevisions.map((revision) => {
@@ -363,7 +411,14 @@ export default function RequestDetail({
           </div>
         )}
         <Pagination page={revisionPage} pageSize={LIST_PAGE_SIZE} total={revisions.length} onPageChange={setRevisionPage} />
-      </div>
+        </div>
+      </details>
+      <RequestComments
+        request={request}
+        user={user}
+        admin={admin}
+        onOpenMention={onOpenMention}
+      />
     </div>
   );
 }
